@@ -230,7 +230,12 @@ unlock() {
     
     echo "$DIRECTORIES" | while IFS= read -r dir; do
         if [ -n "$dir" ]; then
-            if [ -d "$dir" ]; then
+            # Check if encrypted files exist for this directory
+            BASE_NAME=$(basename "$dir")
+            ENCRYPTED_ARCHIVE=".git-vault/data/${BASE_NAME}.tar.gz.aes256gcm.enc"
+            NONCE_FILE=".git-vault/data/${BASE_NAME}.nonce"
+            
+            if [ -f "$ENCRYPTED_ARCHIVE" ] && [ -f "$NONCE_FILE" ]; then
                 log_info "Unlocking $dir"
                 if [ "$QUIET_MODE" = true ]; then
                     "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" decrypt "$GIT_VAULT_PASS" --quiet
@@ -238,7 +243,7 @@ unlock() {
                     "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" decrypt "$GIT_VAULT_PASS"
                 fi
             else
-                log_info "Warning: Directory '$dir' not found, skipping."
+                log_info "Warning: No encrypted files found for '$dir' (looking for $ENCRYPTED_ARCHIVE and $NONCE_FILE)"
             fi
         fi
     done
