@@ -84,30 +84,52 @@ fi
 
 mkdir -p "$FULL_INSTALL_PATH"
 
-# Download git-vault files
-print_info "Downloading git-vault files..."
-
-# Base URL for raw files (adjust this to your actual repository)
-BASE_URL="https://raw.githubusercontent.com/benjaminpreiss/git-vault/main"
-
-# Download core files
-files_to_download=(
+# Install git-vault files (local or download)
+files_to_install=(
     "locker.sh"
     "encrypt_decrypt.sh"
 )
 
-for file in "${files_to_download[@]}"; do
-    print_info "Downloading $file..."
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$BASE_URL/$file" -o "$FULL_INSTALL_PATH/$file"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q "$BASE_URL/$file" -O "$FULL_INSTALL_PATH/$file"
-    else
-        print_error "Neither curl nor wget is available. Please install one of them."
-        exit 1
-    fi
-    chmod +x "$FULL_INSTALL_PATH/$file"
-done
+# Check if we have local source files (for testing/development)
+LOCAL_SOURCE_DIR=""
+if [ -d "/home/testuser/git-vault-source" ]; then
+    LOCAL_SOURCE_DIR="/home/testuser/git-vault-source"
+elif [ -d "$(dirname "$0")" ] && [ -f "$(dirname "$0")/locker.sh" ]; then
+    LOCAL_SOURCE_DIR="$(dirname "$0")"
+fi
+
+if [ -n "$LOCAL_SOURCE_DIR" ]; then
+    print_info "Using local git-vault files from $LOCAL_SOURCE_DIR..."
+    
+    for file in "${files_to_install[@]}"; do
+        if [ -f "$LOCAL_SOURCE_DIR/$file" ]; then
+            print_info "Copying $file..."
+            cp "$LOCAL_SOURCE_DIR/$file" "$FULL_INSTALL_PATH/$file"
+            chmod +x "$FULL_INSTALL_PATH/$file"
+        else
+            print_error "Local file $LOCAL_SOURCE_DIR/$file not found."
+            exit 1
+        fi
+    done
+else
+    print_info "Downloading git-vault files from GitHub..."
+    
+    # Base URL for raw files (adjust this to your actual repository)
+    BASE_URL="https://raw.githubusercontent.com/benjaminpreiss/git-vault/main"
+    
+    for file in "${files_to_install[@]}"; do
+        print_info "Downloading $file..."
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$BASE_URL/$file" -o "$FULL_INSTALL_PATH/$file"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -q "$BASE_URL/$file" -O "$FULL_INSTALL_PATH/$file"
+        else
+            print_error "Neither curl nor wget is available. Please install one of them."
+            exit 1
+        fi
+        chmod +x "$FULL_INSTALL_PATH/$file"
+    done
+fi
 
 # Create .git-vault-dirs if it doesn't exist
 CONFIG_FILE="$GIT_ROOT/.git-vault-dirs"
@@ -193,26 +215,21 @@ GIT_VAULT_HOOK_CONTENT='
 # Get the git repo root directory
 repo_root=$(git rev-parse --show-toplevel)
 
-# Run the locker.sh script
-"${repo_root}/'$INSTALL_DIR'/locker.sh" lock
+# Run the locker.sh script in quiet mode
+"${repo_root}/'$INSTALL_DIR'/locker.sh" --quiet lock
 
 # Check the exit status of the script
 if [ $? -ne 0 ]; then
-    echo "Error: git-vault lock failed"
+    echo "git-vault: encryption failed" >&2
     exit 1
 fi
 
-# Stage encrypted files
+# Stage encrypted files silently
 find "$repo_root" -name "*.nonce" -o -name "*.tar.gz.aes256gcm.enc" | while read file; do
     if [ -f "$file" ]; then
-        git add "$file"
+        git add "$file" 2>/dev/null
     fi
 done
-
-# Check if any files were staged
-if ! git diff --cached --quiet; then
-    echo "Staged encrypted files for commit"
-fi
 # === git-vault pre-commit hook END ===
 '
 

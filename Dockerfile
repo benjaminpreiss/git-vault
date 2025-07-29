@@ -1,10 +1,7 @@
-FROM ubuntu:22.04
+FROM alpine:latest
 
-# Avoid interactive prompts during package installation
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install required packages
-RUN apt-get update && apt-get install -y \
+# Install required packages including Botan 3
+RUN apk add --no-cache \
     bash \
     git \
     curl \
@@ -12,11 +9,13 @@ RUN apt-get update && apt-get install -y \
     tar \
     sed \
     grep \
-    botan \
-    && rm -rf /var/lib/apt/lists/*
+    botan3
+
+# Verify Botan 3 installation
+RUN botan version
 
 # Set up a non-root user for testing
-RUN useradd -m -s /bin/bash testuser && \
+RUN adduser -D -s /bin/bash testuser && \
     echo "testuser:testuser" | chpasswd
 
 # Switch to test user

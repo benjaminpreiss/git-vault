@@ -1,8 +1,16 @@
 #!/bin/bash
 
+# Check for quiet mode (used by pre-commit hook)
+QUIET_MODE=false
+if [ "$1" = "--quiet" ]; then
+    QUIET_MODE=true
+    shift
+fi
+
 # Function to show usage
 usage() {
-    echo "Usage: $0 <mode>"
+    echo "Usage: $0 [--quiet] <mode>"
+    echo "  --quiet: Suppress non-error output (for use in git hooks)"
     echo "  <mode>: Either 'lock' or 'unlock'"
     echo ""
     echo "Note: The encryption key is stored in a .git-vault.env file in the git repository root."
@@ -16,6 +24,17 @@ usage() {
     echo "Tip: To generate a suitable 256-bit key, you can use the following command:"
     echo "  botan rng --format=hex 32"
     exit 1
+}
+
+# Function for quiet-aware output
+log_info() {
+    if [ "$QUIET_MODE" = false ]; then
+        echo "$1"
+    fi
+}
+
+log_error() {
+    echo "Error: $1" >&2
 }
 
 # Check if one argument is provided
@@ -56,14 +75,14 @@ fi
 
 # Function to generate and save a new key
 generate_key() {
-    echo "Generating new encryption key..."
+    log_info "Generating new encryption key..."
     NEW_KEY=$(botan rng --format=hex 32)
     if [ $? -ne 0 ]; then
-        echo "Error: Failed to generate key. Please ensure Botan is installed."
+        log_error "Failed to generate key. Please ensure Botan is installed."
         exit 1
     fi
     echo "GIT_VAULT_PASS=$NEW_KEY" > "$GIT_ROOT/.git-vault.env"
-    echo "New encryption key generated and saved to .git-vault.env file."
+    log_info "New encryption key generated and saved to .git-vault.env file."
     GIT_VAULT_PASS="$NEW_KEY"
 }
 
@@ -72,11 +91,11 @@ ENV_FILE="$GIT_ROOT/.git-vault.env"
 if [ -f "$ENV_FILE" ]; then
     source "$ENV_FILE"
     if [ -z "$GIT_VAULT_PASS" ]; then
-        echo "GIT_VAULT_PASS not found in .git-vault.env file."
+        log_error "GIT_VAULT_PASS not found in .git-vault.env file."
         if [ "$MODE" = "lock" ]; then
             generate_key
         else
-            echo "Error: Cannot decrypt without existing key. Please run lock operation first or manually set GIT_VAULT_PASS in .git-vault.env file."
+            log_error "Cannot decrypt without existing key. Please run lock operation first or manually set GIT_VAULT_PASS in .git-vault.env file."
             exit 1
         fi
     fi
@@ -84,29 +103,29 @@ else
     if [ "$MODE" = "lock" ]; then
         generate_key
     else
-        echo "Error: .git-vault.env file not found. Cannot decrypt without existing key."
-        echo "Please run lock operation first to generate a key, or manually create .git-vault.env file with GIT_VAULT_PASS."
+        log_error ".git-vault.env file not found. Cannot decrypt without existing key."
+        log_error "Please run lock operation first to generate a key, or manually create .git-vault.env file with GIT_VAULT_PASS."
         exit 1
     fi
 fi
 
 # Validate the key (hex encoded 256-bit key is 64 characters long)
 if ! [[ $GIT_VAULT_PASS =~ ^[0-9A-Fa-f]{64}$ ]]; then
-    echo "Error: Invalid key in .git-vault.env file. Please provide a 256-bit key in hexadecimal format (64 characters)."
-    echo "Tip: You can generate a suitable key using: botan rng --format=hex 32"
+    log_error "Invalid key in .git-vault.env file. Please provide a 256-bit key in hexadecimal format (64 characters)."
+    log_error "Tip: You can generate a suitable key using: botan rng --format=hex 32"
     exit 1
 fi
 
 # Ensure .gitignore exists and contains .git-vault.env entry
 GITIGNORE_FILE="$GIT_ROOT/.gitignore"
 if [ ! -f "$GITIGNORE_FILE" ]; then
-    echo "Creating .gitignore file..."
+    log_info "Creating .gitignore file..."
     echo ".git-vault.env" > "$GITIGNORE_FILE"
-    echo ".gitignore created with .git-vault.env entry."
+    log_info ".gitignore created with .git-vault.env entry."
 elif ! grep -q "^\.git-vault\.env$" "$GITIGNORE_FILE"; then
-    echo "Adding .git-vault.env to .gitignore..."
+    log_info "Adding .git-vault.env to .gitignore..."
     echo ".git-vault.env" >> "$GITIGNORE_FILE"
-    echo ".git-vault.env entry added to .gitignore."
+    log_info ".git-vault.env entry added to .gitignore."
 fi
 
 # Read directories from plain text file using only bash built-ins
@@ -140,7 +159,7 @@ read_directories() {
 DIRECTORIES=$(read_directories "$CONFIG_FILE")
 
 if [ $? -ne 0 ]; then
-    echo "Error: Failed to read .git-vault-dirs. Please ensure the file exists."
+    log_error "Failed to read .git-vault-dirs. Please ensure the file exists."
     exit 1
 fi
 
@@ -155,7 +174,7 @@ if [ -n "$DIRECTORIES" ]; then
                 echo "$dir/*" >> "$GITIGNORE_FILE"
                 echo "!$dir/*.nonce" >> "$GITIGNORE_FILE"
                 echo "!$dir/*.tar.gz.aes256gcm.enc" >> "$GITIGNORE_FILE"
-                echo "Added $dir/ to .gitignore with encrypted file exceptions."
+                log_info "Added $dir/ to .gitignore with encrypted file exceptions."
             fi
         fi
     done
@@ -167,17 +186,21 @@ cd "$GIT_ROOT" || { echo "Error: Cannot change to git repository root."; exit 1;
 # Function to lock directories
 lock() {
     if [ -z "$DIRECTORIES" ]; then
-        echo "No directories specified in .git-vault-dirs"
+        log_info "No directories specified in .git-vault-dirs"
         return 0
     fi
     
     echo "$DIRECTORIES" | while IFS= read -r dir; do
         if [ -n "$dir" ]; then
             if [ -d "$dir" ]; then
-                echo "Locking $dir"
-                "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" encrypt "$GIT_VAULT_PASS"
+                log_info "Locking $dir"
+                if [ "$QUIET_MODE" = true ]; then
+                    "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" encrypt "$GIT_VAULT_PASS" --quiet
+                else
+                    "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" encrypt "$GIT_VAULT_PASS"
+                fi
             else
-                echo "Warning: Directory '$dir' not found, skipping."
+                log_info "Warning: Directory '$dir' not found, skipping."
             fi
         fi
     done
@@ -186,17 +209,21 @@ lock() {
 # Function to unlock directories
 unlock() {
     if [ -z "$DIRECTORIES" ]; then
-        echo "No directories specified in .git-vault-dirs"
+        log_info "No directories specified in .git-vault-dirs"
         return 0
     fi
     
     echo "$DIRECTORIES" | while IFS= read -r dir; do
         if [ -n "$dir" ]; then
             if [ -d "$dir" ]; then
-                echo "Unlocking $dir"
-                "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" decrypt "$GIT_VAULT_PASS"
+                log_info "Unlocking $dir"
+                if [ "$QUIET_MODE" = true ]; then
+                    "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" decrypt "$GIT_VAULT_PASS" --quiet
+                else
+                    "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" decrypt "$GIT_VAULT_PASS"
+                fi
             else
-                echo "Warning: Directory '$dir' not found, skipping."
+                log_info "Warning: Directory '$dir' not found, skipping."
             fi
         fi
     done
@@ -211,7 +238,7 @@ case "$MODE" in
         unlock
         ;;
     *)
-        echo "Error: Invalid mode. Use 'lock' or 'unlock'."
+        log_error "Invalid mode. Use 'lock' or 'unlock'."
         usage
         ;;
 esac
