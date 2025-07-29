@@ -8,42 +8,65 @@ set -e
 # Default installation directory
 DEFAULT_INSTALL_DIR=".git-vault"
 
-# Colors for output
+# Colors for output (cross-platform compatible)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Cross-platform echo function
+print_colored() {
+    local color="$1"
+    local message="$2"
+    # Try printf first (more portable), fallback to echo
+    if command -v printf >/dev/null 2>&1; then
+        printf "%b%s%b\n" "$color" "$message" "$NC"
+    else
+        echo "$color$message$NC"
+    fi
+}
+
 # Function to print colored output
 print_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    print_colored "$BLUE" "[INFO] $1"
 }
 
 print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    print_colored "$GREEN" "[SUCCESS] $1"
 }
 
 print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    print_colored "$YELLOW" "[WARNING] $1"
 }
 
 print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    print_colored "$RED" "[ERROR] $1"
 }
 
 # Function to show usage
 usage() {
     echo "Usage: $0 [OPTIONS]"
     echo "Options:"
-    echo "  -d, --dir DIR    Installation directory (default: $DEFAULT_INSTALL_DIR)"
+    echo "  -d, --dir DIR    Installation directory for git-vault scripts (default: $DEFAULT_INSTALL_DIR)"
     echo "  -h, --help       Show this help message"
+    echo ""
+    echo "Note: The --dir option specifies where to install git-vault scripts, NOT which directories to encrypt."
+    echo "To configure which directories to encrypt, edit the .git-vault-dirs file after installation."
+    echo ""
+    echo "Examples:"
+    echo "  $0                           # Install to default .git-vault directory"
+    echo "  $0 --dir .my-vault          # Install to custom .my-vault directory"
+    echo ""
+    echo "After installation, configure directories to encrypt:"
+    echo "  echo 'secrets' >> .git-vault-dirs"
+    echo "  echo 'private' >> .git-vault-dirs"
     exit 1
 }
 
 # Parse command line arguments
 INSTALL_DIR="$DEFAULT_INSTALL_DIR"
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
     case $1 in
         -d|--dir)
             INSTALL_DIR="$2"
@@ -74,11 +97,25 @@ print_info "Installing git-vault to: $FULL_INSTALL_PATH"
 
 if [ -d "$FULL_INSTALL_PATH" ]; then
     print_warning "Directory $FULL_INSTALL_PATH already exists. Contents may be overwritten."
-    read -p "Continue? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        print_info "Installation cancelled."
-        exit 0
+    
+    # Check if we're in an interactive terminal (cross-platform)
+    if [ -t 0 ] && [ -t 1 ]; then
+        # Interactive mode - ask for confirmation (cross-platform)
+        printf "Continue? (y/N): "
+        read REPLY
+        # Cross-platform case-insensitive check
+        case "$REPLY" in
+            [Yy]|[Yy][Ee][Ss])
+                # Continue
+                ;;
+            *)
+                print_info "Installation cancelled."
+                exit 0
+                ;;
+        esac
+    else
+        # Non-interactive mode (piped from curl) - proceed automatically
+        print_info "Non-interactive mode detected. Proceeding with installation..."
     fi
 fi
 
@@ -176,8 +213,10 @@ if [ -f "$CONFIG_FILE" ]; then
             line="${line#"${line%%[![:space:]]*}"}"
             line="${line%"${line##*[![:space:]]}"}"
             
-            # Skip empty lines and comments (lines starting with #)
-            [[ -z "$line" || "$line" =~ ^# ]] && continue
+            # Skip empty lines and comments (lines starting with #) - cross-platform
+            if [ -z "$line" ] || echo "$line" | grep -E '^#' >/dev/null 2>&1; then
+                continue
+            fi
             
             echo "$line"
         done < "$config_file"
@@ -185,14 +224,12 @@ if [ -f "$CONFIG_FILE" ]; then
     
     read_directories "$CONFIG_FILE" | while IFS= read -r dir; do
         if [ -n "$dir" ]; then
-            # Add directory to .gitignore with encrypted file exceptions if not already present
+            # Add directory to .gitignore (encrypted files are now stored in .git-vault/data/)
             if ! grep -q "^$dir/\*$" "$GITIGNORE_FILE" 2>/dev/null && ! grep -q "^$dir$" "$GITIGNORE_FILE" 2>/dev/null; then
                 echo "" >> "$GITIGNORE_FILE"
                 echo "# Added by git-vault for $dir" >> "$GITIGNORE_FILE"
                 echo "$dir/*" >> "$GITIGNORE_FILE"
-                echo "!$dir/*.nonce" >> "$GITIGNORE_FILE"
-                echo "!$dir/*.tar.gz.aes256gcm.enc" >> "$GITIGNORE_FILE"
-                print_info "Added $dir/ to .gitignore with encrypted file exceptions"
+                print_info "Added $dir/ to .gitignore"
             fi
         fi
     done
@@ -224,12 +261,14 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Stage encrypted files silently
-find "$repo_root" -name "*.nonce" -o -name "*.tar.gz.aes256gcm.enc" | while read file; do
-    if [ -f "$file" ]; then
-        git add "$file" 2>/dev/null
-    fi
-done
+# Stage encrypted files silently from .git-vault/data/
+if [ -d "$repo_root/.git-vault/data" ]; then
+    find "$repo_root/.git-vault/data" -name "*.nonce" -o -name "*.tar.gz.aes256gcm.enc" 2>/dev/null | while IFS= read -r file; do
+        if [ -f "$file" ]; then
+            git add "$file" 2>/dev/null
+        fi
+    done
+fi
 # === git-vault pre-commit hook END ===
 '
 

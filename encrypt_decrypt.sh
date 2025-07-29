@@ -60,6 +60,15 @@ fi
 # Ensure FILE_PATH ends with a slash
 FILE_PATH="${FILE_PATH%/}/"
 
+# Create .git-vault/data directory if it doesn't exist
+DATA_DIR=".git-vault/data"
+if [ ! -d "$DATA_DIR" ]; then
+    mkdir -p "$DATA_DIR"
+fi
+
+# Override FILE_PATH to use .git-vault/data/
+FILE_PATH="$DATA_DIR/"
+
 # Check if directory exists (for encrypt) or if we can create it (for decrypt)
 if [ "$OPERATION" = "encrypt" ]; then
     if [ ! -d "$DIRECTORY" ]; then
@@ -75,7 +84,8 @@ elif [ "$OPERATION" = "decrypt" ]; then
 fi
 
 # Validate the key (hex encoded 256-bit key is 64 characters long)
-if ! [[ $KEY =~ ^[0-9A-Fa-f]{64}$ ]]; then
+# Cross-platform regex check
+if ! echo "$KEY" | grep -E '^[0-9A-Fa-f]{64}$' >/dev/null 2>&1; then
     log_error "Invalid key. Please provide a 256-bit key in hexadecimal format (64 characters)."
     log_error "Tip: You can generate a suitable key using: botan rng --format=hex 32"
     exit 1
@@ -86,27 +96,38 @@ BASE_NAME=$(basename "$DIRECTORY")
 ENCRYPTED_ARCHIVE="${FILE_PATH}${BASE_NAME}.tar.gz.aes256gcm.enc"
 NONCE_FILE="${FILE_PATH}${BASE_NAME}.nonce"
 
+# Cross-platform file size function
+get_file_size() {
+    local file="$1"
+    if [ -f "$file" ]; then
+        if command -v stat >/dev/null 2>&1; then
+            # Try Linux/GNU stat first
+            if stat -c%s "$file" 2>/dev/null; then
+                return 0
+            # Fall back to macOS/BSD stat
+            elif stat -f%z "$file" 2>/dev/null; then
+                return 0
+            fi
+        fi
+        # Fallback using wc if stat fails
+        wc -c < "$file" 2>/dev/null || echo "unknown"
+    else
+        echo "0"
+    fi
+}
+
 # Function to encrypt
 encrypt() {
-    echo "Encrypting $DIRECTORY..."
-    
-    # Create a temporary directory
-    TEMP_DIR=$(mktemp -d)
-    
-    # Create an archive of the source directory
-    tar -czf "$TEMP_DIR/$BASE_NAME.tar.gz" -C "$DIRECTORY" .
-    
-    # Generate a random 96-bit nonce in hex format
-    NONCE=$(botan rng --format=hex 12)
-    
-    # Save the nonce to a file
-    echo -n "$NONCE" > "$NONCE_FILE"
-    
-    # Encrypt the archive using Botan 3 with AES-256/GCM
     log_info "Encrypting $DIRECTORY..."
     
-    # Create a temporary directory
-    TEMP_DIR=$(mktemp -d)
+    # Create a temporary directory (cross-platform)
+    if command -v mktemp >/dev/null 2>&1; then
+        TEMP_DIR=$(mktemp -d)
+    else
+        # Fallback for systems without mktemp
+        TEMP_DIR="/tmp/git-vault-$$-$(date +%s)"
+        mkdir -p "$TEMP_DIR"
+    fi
     
     # Create an archive of the source directory
     tar -czf "$TEMP_DIR/$BASE_NAME.tar.gz" -C "$DIRECTORY" .
@@ -117,7 +138,7 @@ encrypt() {
     # Save the nonce to a file
     echo -n "$NONCE" > "$NONCE_FILE"
     
-    log_debug "Debug: Archive size before encryption: $(stat -c%s "$TEMP_DIR/$BASE_NAME.tar.gz")"
+    log_debug "Debug: Archive size before encryption: $(get_file_size "$TEMP_DIR/$BASE_NAME.tar.gz")"
     
     # Encrypt the archive using Botan 3 with AES-256/GCM
     if ! botan cipher --cipher=AES-256/GCM --key="$KEY" --nonce="$NONCE" "$TEMP_DIR/$BASE_NAME.tar.gz" > "$ENCRYPTED_ARCHIVE"; then
@@ -137,59 +158,19 @@ encrypt() {
     
     log_info "Encryption complete. Encrypted archive: $ENCRYPTED_ARCHIVE"
     log_info "Nonce saved to: $NONCE_FILE"
-    log_debug "Debug: Encrypted file size: $(stat -c%s "$ENCRYPTED_ARCHIVE")"
-    
-    # Clean up
-    rm -rf "$TEMP_DIR"
-    
-    echo "Encryption complete. Encrypted archive: $ENCRYPTED_ARCHIVE"
-    echo "Nonce saved to: $NONCE_FILE"
+    log_debug "Debug: Encrypted file size: $(get_file_size "$ENCRYPTED_ARCHIVE")"
 }
 
 # Function to decrypt
 decrypt() {
-    echo "Decrypting $ENCRYPTED_ARCHIVE..."
-    
-    # Check if encrypted archive exists
-    if [ ! -f "$ENCRYPTED_ARCHIVE" ]; then
-        echo "Error: Encrypted archive $ENCRYPTED_ARCHIVE not found."
-        echo "Available files in current directory:"
-        ls -la *.enc *.nonce 2>/dev/null || echo "No encrypted files found"
-        exit 1
-    fi
-    
-    # Check if nonce file exists
-    if [ ! -f "$NONCE_FILE" ]; then
-        echo "Error: Nonce file $NONCE_FILE not found."
-        echo "Available files in current directory:"
-        ls -la *.nonce 2>/dev/null || echo "No nonce files found"
-        exit 1
-    fi
-    
-    # Read the nonce from the file
-    NONCE=$(cat "$NONCE_FILE")
-    echo "Debug: Using nonce: $NONCE"
-    echo "Debug: Nonce length: ${#NONCE}"
-    
-    # Validate nonce format (should be 24 hex characters for 96-bit nonce)
-    if ! [[ $NONCE =~ ^[0-9A-Fa-f]{24}$ ]]; then
-        echo "Error: Invalid nonce format. Expected 24 hex characters, got: $NONCE"
-        exit 1
-    fi
-    
-    # Create a temporary directory
-    TEMP_DIR=$(mktemp -d)
-    echo "Debug: Using temp directory: $TEMP_DIR"
-    
-    # Decrypt the archive using Botan 3 with AES-256/GCM
     log_info "Decrypting $ENCRYPTED_ARCHIVE..."
     
     # Check if encrypted archive exists
     if [ ! -f "$ENCRYPTED_ARCHIVE" ]; then
         log_error "Encrypted archive $ENCRYPTED_ARCHIVE not found."
         if [ "$QUIET_MODE" = false ]; then
-            echo "Available files in current directory:"
-            ls -la *.enc *.nonce 2>/dev/null || echo "No encrypted files found"
+            echo "Available files in $DATA_DIR:"
+            ls -la "$DATA_DIR"/*.enc "$DATA_DIR"/*.nonce 2>/dev/null || echo "No encrypted files found"
         fi
         exit 1
     fi
@@ -198,8 +179,8 @@ decrypt() {
     if [ ! -f "$NONCE_FILE" ]; then
         log_error "Nonce file $NONCE_FILE not found."
         if [ "$QUIET_MODE" = false ]; then
-            echo "Available files in current directory:"
-            ls -la *.nonce 2>/dev/null || echo "No nonce files found"
+            echo "Available files in $DATA_DIR:"
+            ls -la "$DATA_DIR"/*.nonce 2>/dev/null || echo "No nonce files found"
         fi
         exit 1
     fi
@@ -209,21 +190,27 @@ decrypt() {
     log_debug "Debug: Using nonce: $NONCE"
     log_debug "Debug: Nonce length: ${#NONCE}"
     
-    # Validate nonce format (should be 24 hex characters for 96-bit nonce)
-    if ! [[ $NONCE =~ ^[0-9A-Fa-f]{24}$ ]]; then
+    # Validate nonce format (should be 24 hex characters for 96-bit nonce) - cross-platform
+    if ! echo "$NONCE" | grep -E '^[0-9A-Fa-f]{24}$' >/dev/null 2>&1; then
         log_error "Invalid nonce format. Expected 24 hex characters, got: $NONCE"
         exit 1
     fi
     
-    # Create a temporary directory
-    TEMP_DIR=$(mktemp -d)
+    # Create a temporary directory (cross-platform)
+    if command -v mktemp >/dev/null 2>&1; then
+        TEMP_DIR=$(mktemp -d)
+    else
+        # Fallback for systems without mktemp
+        TEMP_DIR="/tmp/git-vault-$$-$(date +%s)"
+        mkdir -p "$TEMP_DIR"
+    fi
     log_debug "Debug: Using temp directory: $TEMP_DIR"
     
     # Decrypt the archive using Botan 3 with AES-256/GCM
     log_debug "Debug: Running decryption command..."
     if ! botan cipher --decrypt --cipher=AES-256/GCM --key="$KEY" --nonce="$NONCE" "$ENCRYPTED_ARCHIVE" > "$TEMP_DIR/$BASE_NAME.tar.gz"; then
         log_error "Botan 3 decryption failed."
-        log_debug "Debug: Encrypted file size: $(stat -c%s "$ENCRYPTED_ARCHIVE" 2>/dev/null || echo "unknown")"
+        log_debug "Debug: Encrypted file size: $(get_file_size "$ENCRYPTED_ARCHIVE")"
         log_debug "Debug: Key length: ${#KEY}"
         log_debug "Debug: Nonce: $NONCE"
         log_debug "Debug: Botan version: $(botan version 2>&1)"
@@ -245,7 +232,7 @@ decrypt() {
         exit 1
     fi
     
-    log_debug "Debug: Decrypted archive size: $(stat -c%s "$TEMP_DIR/$BASE_NAME.tar.gz")"
+    log_debug "Debug: Decrypted archive size: $(get_file_size "$TEMP_DIR/$BASE_NAME.tar.gz")"
     
     # Unpack the archive, overwriting existing files
     log_debug "Debug: Extracting archive to $DIRECTORY"

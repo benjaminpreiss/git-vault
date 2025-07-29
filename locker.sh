@@ -45,8 +45,21 @@ fi
 # Assign argument to variable
 MODE="$1"
 
-# Get the directory of the script
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+# Get the directory of the script (cross-platform compatible)
+get_script_dir() {
+    # Try to get the directory of the script in a portable way
+    if [ -n "${BASH_SOURCE:-}" ]; then
+        # Bash
+        cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+    elif [ -n "${ZSH_VERSION:-}" ]; then
+        # Zsh
+        cd "$(dirname "${(%):-%x}")" && pwd
+    else
+        # Fallback for other shells
+        cd "$(dirname "$0")" && pwd
+    fi
+}
+SCRIPT_DIR="$(get_script_dir)"
 
 # Find git repository root
 GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
@@ -110,7 +123,8 @@ else
 fi
 
 # Validate the key (hex encoded 256-bit key is 64 characters long)
-if ! [[ $GIT_VAULT_PASS =~ ^[0-9A-Fa-f]{64}$ ]]; then
+# Cross-platform regex check
+if ! echo "$GIT_VAULT_PASS" | grep -E '^[0-9A-Fa-f]{64}$' >/dev/null 2>&1; then
     log_error "Invalid key in .git-vault.env file. Please provide a 256-bit key in hexadecimal format (64 characters)."
     log_error "Tip: You can generate a suitable key using: botan rng --format=hex 32"
     exit 1
@@ -142,14 +156,17 @@ read_directories() {
         line="${line#"${line%%[![:space:]]*}"}"
         line="${line%"${line##*[![:space:]]}"}"
         
-        # Skip empty lines and comments (lines starting with #)
-        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        # Skip empty lines and comments (lines starting with #) - cross-platform
+        if [ -z "$line" ] || echo "$line" | grep -E '^#' >/dev/null 2>&1; then
+            continue
+        fi
         
-        # Add directory to list
+        # Add directory to list (cross-platform newline)
         if [ -z "$directories" ]; then
             directories="$line"
         else
-            directories="$directories"$'\n'"$line"
+            directories="$directories
+$line"
         fi
     done < "$config_file"
     
@@ -163,7 +180,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Add secret directories to .gitignore (but explicitly include encrypted files)
+# Add secret directories to .gitignore (encrypted files are now stored in .git-vault/data/)
 if [ -n "$DIRECTORIES" ]; then
     echo "$DIRECTORIES" | while IFS= read -r dir; do
         if [ -n "$dir" ]; then
@@ -172,9 +189,7 @@ if [ -n "$DIRECTORIES" ]; then
                 echo "" >> "$GITIGNORE_FILE"
                 echo "# Added by git-vault for $dir" >> "$GITIGNORE_FILE"
                 echo "$dir/*" >> "$GITIGNORE_FILE"
-                echo "!$dir/*.nonce" >> "$GITIGNORE_FILE"
-                echo "!$dir/*.tar.gz.aes256gcm.enc" >> "$GITIGNORE_FILE"
-                log_info "Added $dir/ to .gitignore with encrypted file exceptions."
+                log_info "Added $dir/ to .gitignore."
             fi
         fi
     done
