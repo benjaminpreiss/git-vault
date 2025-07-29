@@ -1,0 +1,31 @@
+version: "3.8"
+
+services:
+    git-vault-test:
+        build: .
+        container_name: git-vault-test
+        volumes:
+            - .:/home/testuser/git-vault-source:ro
+            - test-results:/home/testuser/test-results
+        environment:
+            - TERM=xterm-256color
+        stdin_open: true
+        tty: true
+
+    # Interactive testing environment
+    git-vault-interactive:
+        build: .
+        container_name: git-vault-interactive
+        volumes:
+            - .:/home/testuser/git-vault-source:ro
+            - test-workspace:/home/testuser/workspace
+        environment:
+            - TERM=xterm-256color
+        stdin_open: true
+        tty: true
+        command: /bin/bash
+        working_dir: /home/testuser/workspace
+
+volumes:
+    test-results:
+    test-workspace:

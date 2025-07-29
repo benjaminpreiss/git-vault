@@ -1,0 +1,8 @@
+# git-vault directories configuration
+# Add one directory path per line (relative to git repository root)
+# Lines starting with # are comments and will be ignored
+#
+# Example:
+# secrets
+# private
+# config/sensitive
