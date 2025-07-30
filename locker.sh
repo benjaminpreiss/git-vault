@@ -231,10 +231,18 @@ unlock() {
     echo "$DIRECTORIES" | while IFS= read -r dir; do
         if [ -n "$dir" ]; then
             # Check if encrypted files exist for this directory
-            # Use the same safe path format as encrypt_decrypt.sh
-            SAFE_PATH=$(echo "$dir" | sed 's|/|__|g')
-            ENCRYPTED_ARCHIVE=".git-vault/data/${SAFE_PATH}.tar.gz.aes256gcm.enc"
-            NONCE_FILE=".git-vault/data/${SAFE_PATH}.nonce"
+            # Use the same path structure as encrypt_decrypt.sh
+            BASE_NAME=$(basename "$dir")
+            DATA_SUBDIR=".git-vault/data/$(dirname "$dir")"
+            
+            # Handle root-level directories (no subdirectory)
+            if [ "$(dirname "$dir")" = "." ]; then
+                ENCRYPTED_ARCHIVE=".git-vault/data/${BASE_NAME}.tar.gz.aes256gcm.enc"
+                NONCE_FILE=".git-vault/data/${BASE_NAME}.nonce"
+            else
+                ENCRYPTED_ARCHIVE="${DATA_SUBDIR}/${BASE_NAME}.tar.gz.aes256gcm.enc"
+                NONCE_FILE="${DATA_SUBDIR}/${BASE_NAME}.nonce"
+            fi
             
             if [ -f "$ENCRYPTED_ARCHIVE" ] && [ -f "$NONCE_FILE" ]; then
                 log_info "Unlocking $dir"

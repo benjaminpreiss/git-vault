@@ -134,16 +134,20 @@ if [ -d "secrets" ] && [ -d "private" ] && [ -d "config/sensitive" ] && [ -d "pu
         echo "public/sensitive/data.txt: $(cat public/sensitive/data.txt)"
         
         echo ""
-        echo "=== Test 9: Verifying no naming conflicts in encrypted files ==="
+        echo "=== Test 9: Verifying exact directory hierarchy in encrypted files ==="
         echo "Checking .git-vault/data/ structure:"
-        ls -la .git-vault/data/
+        find .git-vault/data/ -type f | sort
         echo ""
-        echo "Expected files with safe path naming:"
-        echo "- config__sensitive.* (for config/sensitive)"
-        echo "- public__sensitive.* (for public/sensitive)"
-        echo "- secrets.* (for secrets)"
-        echo "- private.* (for private)"
-        echo "✅ SUCCESS: Path structure preserves directory hierarchy and avoids conflicts"
+        echo "Expected files with exact path mirroring:"
+        echo "- .git-vault/data/config/sensitive.tar.gz.aes256gcm.enc"
+        echo "- .git-vault/data/config/sensitive.nonce"
+        echo "- .git-vault/data/public/sensitive.tar.gz.aes256gcm.enc"
+        echo "- .git-vault/data/public/sensitive.nonce"
+        echo "- .git-vault/data/secrets.tar.gz.aes256gcm.enc"
+        echo "- .git-vault/data/secrets.nonce"
+        echo "- .git-vault/data/private.tar.gz.aes256gcm.enc"
+        echo "- .git-vault/data/private.nonce"
+        echo "✅ SUCCESS: Path structure exactly mirrors original directory hierarchy"
     else
         echo "❌ FAILURE: Files were not restored"
         exit 1
