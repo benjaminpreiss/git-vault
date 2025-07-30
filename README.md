@@ -80,9 +80,9 @@ The encryption key is automatically generated and stored in `.git-vault.env` in 
 ```
 # Added by git-vault for secrets
 secrets/*
-!secrets/*.nonce
-!secrets/*.tar.gz.aes256gcm.enc
 ```
+
+**Note**: Encrypted files are stored in `.git-vault/data/` directory with the same path structure as your original directories, so they don't conflict with gitignore patterns for secret directories.
 
 ## Usage
 
@@ -154,6 +154,15 @@ your-repo/
 ├── .git-vault/              # git-vault installation directory
 │   ├── locker.sh           # Main script
 │   └── encrypt_decrypt.sh  # Core encryption functionality
+├── .git-vault/data/         # Encrypted files storage (mirrors directory structure)
+│   ├── secrets.tar.gz.aes256gcm.enc
+│   ├── secrets.nonce
+│   ├── config/
+│   │   ├── sensitive.tar.gz.aes256gcm.enc
+│   │   └── sensitive.nonce
+│   └── public/
+│       ├── artworks.tar.gz.aes256gcm.enc
+│       └── artworks.nonce
 ├── git-vault               # Wrapper script for easy access
 ├── .git-vault-dirs         # Configuration file
 ├── .git-vault.env          # Environment file (auto-generated, not committed)
@@ -170,11 +179,36 @@ your-repo/
 -   **Configuration-based** - Flexible directory specification via plain text
 -   **Automatic gitignore** - Prevents accidental key commits
 
+## Encrypted File Storage
+
+git-vault stores encrypted files in the `.git-vault/data/` directory, preserving the exact directory structure of your original files:
+
+### Directory Structure Examples
+
+```
+Original directories:          Encrypted storage:
+├── secrets/                  ├── .git-vault/data/secrets.tar.gz.aes256gcm.enc
+├── private/                  ├── .git-vault/data/secrets.nonce
+├── config/sensitive/         ├── .git-vault/data/private.tar.gz.aes256gcm.enc
+└── public/artworks/          ├── .git-vault/data/private.nonce
+                              ├── .git-vault/data/config/sensitive.tar.gz.aes256gcm.enc
+                              ├── .git-vault/data/config/sensitive.nonce
+                              ├── .git-vault/data/public/artworks.tar.gz.aes256gcm.enc
+                              └── .git-vault/data/public/artworks.nonce
+```
+
+### Key Benefits
+
+-   **No naming conflicts**: `config/sensitive` and `public/sensitive` are stored separately
+-   **Intuitive organization**: Encrypted files mirror your directory structure
+-   **Git-friendly**: All encrypted files are in one location (`.git-vault/data/`)
+-   **Clean separation**: Original directories remain untouched during encryption
+
 ## Requirements
 
 -   Bash shell
 -   Git
--   Botan cryptography library
+-   Botan cryptography library (Botan 3 recommended)
 -   Standard Unix tools (tar, sed, grep, etc.)
 -   curl or wget (for installation)
 
@@ -222,11 +256,13 @@ chmod +x .git/hooks/pre-commit
 
 ## Notes
 
--   Encrypted files are stored in the same location as the original directories
--   Original directories are replaced with their encrypted counterparts during locking
+-   **Encrypted files are stored in `.git-vault/data/`** with the same directory structure as your original directories
+-   **Path structure preservation**: `public/artworks` → `.git-vault/data/public/artworks.tar.gz.aes256gcm.enc`
+-   **No naming conflicts**: Nested directories with same basename (e.g., `config/sensitive` and `public/sensitive`) are handled correctly
 -   The tool works from the Git repository root, regardless of where scripts are located
 -   Directory paths in `.git-vault-dirs` are always relative to the Git repository root
 -   The pre-commit hook ensures you never accidentally commit unencrypted sensitive data
+-   Original directories remain in place during locking - only encrypted copies are created
 
 ## Troubleshooting
 
@@ -307,11 +343,12 @@ Start an interactive testing environment:
 
 The Docker test environment includes:
 
--   **Ubuntu 22.04** base image
--   **All dependencies** pre-installed (bash, git, botan, etc.)
+-   **Alpine Linux** base image with Botan 3
+-   **All dependencies** pre-installed (bash, git, botan3, etc.)
 -   **Non-root user** for realistic testing
 -   **Isolated environment** safe for testing
 -   **Automated test suite** covering all functionality
+-   **Cross-platform compatibility** testing
 
 ### Manual Testing Steps
 
