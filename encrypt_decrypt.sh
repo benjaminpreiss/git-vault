@@ -91,10 +91,17 @@ if ! echo "$KEY" | grep -E '^[0-9A-Fa-f]{64}$' >/dev/null 2>&1; then
     exit 1
 fi
 
-# Get the base name of the directory
-BASE_NAME=$(basename "$DIRECTORY")
-ENCRYPTED_ARCHIVE="${FILE_PATH}${BASE_NAME}.tar.gz.aes256gcm.enc"
-NONCE_FILE="${FILE_PATH}${BASE_NAME}.nonce"
+# Create the full path structure within .git-vault/data/
+# Replace slashes with underscores to create a safe filename while preserving path info
+SAFE_PATH=$(echo "$DIRECTORY" | sed 's|/|__|g')
+ENCRYPTED_ARCHIVE="${FILE_PATH}${SAFE_PATH}.tar.gz.aes256gcm.enc"
+NONCE_FILE="${FILE_PATH}${SAFE_PATH}.nonce"
+
+# Also create the directory structure within .git-vault/data/ to mirror the original
+DATA_SUBDIR="${FILE_PATH}$(dirname "$DIRECTORY")"
+if [ "$DATA_SUBDIR" != "${FILE_PATH}." ] && [ ! -d "$DATA_SUBDIR" ]; then
+    mkdir -p "$DATA_SUBDIR"
+fi
 
 # Cross-platform file size function
 get_file_size() {
