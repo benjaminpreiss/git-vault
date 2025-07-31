@@ -18,12 +18,10 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Stage encrypted files silently from .git-vault/data/
-if [ -d "$repo_root/.git-vault/data" ]; then
-    find "$repo_root/.git-vault/data" -name "*.nonce" -o -name "*.aes256gcm.enc" 2>/dev/null | while IFS= read -r file; do
-        if [ -f "$file" ]; then
-            git add "$file" 2>/dev/null
-        fi
+# Stage all files from .git-vault directory (including data/, state.hash, etc.)
+if [ -d "$repo_root/.git-vault" ]; then
+    find "$repo_root/.git-vault" -type f 2>/dev/null | while IFS= read -r file; do
+        git add "$file" 2>/dev/null
     done
 fi
 

@@ -98,6 +98,12 @@ main() {
         "/home/testuser/test-precommit-hook.sh" \
         "/home/testuser/test-precommit-hook"
     
+    # Test 3: State hash staging behavior
+    run_test_suite \
+        "State Hash Staging Test" \
+        "/home/testuser/test-state-hash-staging.sh" \
+        "/home/testuser/test-state-hash-staging"
+    
     # Final results
     print_header "Test Results Summary"
     
@@ -112,6 +118,8 @@ main() {
         print_info "Key achievements verified:"
         echo "  ✅ Bash-native incremental encryption system works correctly"
         echo "  ✅ Pre-commit hook only creates patches when vault contents change"
+        echo "  ✅ State.hash files are properly created and staged"
+        echo "  ✅ All .git-vault directory contents are auto-committed"
         echo "  ✅ Encryption/decryption maintains data integrity"
         echo "  ✅ Space-efficient storage with incremental patches"
         echo "  ✅ Full unlock/restore functionality works correctly"
@@ -132,7 +140,7 @@ main() {
 cleanup() {
     print_info "Cleaning up test directories..."
     cd /home/testuser
-    rm -rf test-git-incremental test-precommit-hook 2>/dev/null || true
+    rm -rf test-git-incremental test-precommit-hook test-state-hash-staging 2>/dev/null || true
 }
 
 # Set up cleanup trap

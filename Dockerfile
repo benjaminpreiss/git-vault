@@ -41,7 +41,8 @@ WORKDIR /home/testuser/test-repo
 # Copy test scripts from test directory
 COPY --chown=testuser:testuser test/test-git-incremental.sh /home/testuser/test-git-incremental.sh
 COPY --chown=testuser:testuser test/test-precommit-hook.sh /home/testuser/test-precommit-hook.sh
-RUN chmod +x /home/testuser/test-git-incremental.sh /home/testuser/test-precommit-hook.sh
+COPY --chown=testuser:testuser test/test-state-hash-staging.sh /home/testuser/test-state-hash-staging.sh
+RUN chmod +x /home/testuser/test-git-incremental.sh /home/testuser/test-precommit-hook.sh /home/testuser/test-state-hash-staging.sh
 
 # Create comprehensive test runner
 COPY --chown=testuser:testuser test/run-all-tests.sh /home/testuser/run-all-tests.sh
