@@ -406,3 +406,212 @@ If tests fail:
 2. **Check permissions**: Ensure test-docker.sh is executable
 3. **Clean environment**: Run `./test-docker.sh clean` and retry
 4. **View logs**: Docker will show detailed error output
+
+## Planned Architecture: Incremental Change-Based Encryption
+
+### Problem Statement
+
+The current git-vault system re-encrypts entire directories with fresh nonces on each commit, causing unnecessary repository growth when dealing with large files. Even small changes to a single file within a vault result in the entire directory being re-encrypted and stored, leading to significant storage overhead over time.
+
+### Solution: Incremental Change Tracking
+
+git-vault will introduce an **incremental change-based encryption system** that tracks and encrypts only the files that have actually changed between commits, dramatically reducing repository growth while maintaining the same security guarantees.
+
+### Architecture Overview
+
+```mermaid
+graph TD
+    A[Directory Changes Detected] --> B{First Time?}
+    B -->|Yes| C[Create Base Snapshot]
+    B -->|No| D[Compare with Previous State]
+
+    C --> E[Encrypt Entire Directory as Base]
+    E --> F[Store Base + Metadata]
+
+    D --> G[Identify Changed Files]
+    G --> H[Create Change Delta]
+    H --> I[Encrypt Only Changed Files]
+    I --> J[Store Change Delta + Metadata]
+
+    F --> K[Commit to Git]
+    J --> K
+
+    L[Restore Request] --> M[Read Base Snapshot]
+    M --> N[Apply Change Deltas in Order]
+    N --> O[Reconstruct Current State]
+```
+
+### Core Components
+
+#### 1. Change Detection Engine
+
+-   **Simple file comparison**: Modification time and file size to detect changes quickly
+-   **Content verification**: SHA-256 hash only when timestamp/size indicate potential changes
+-   **Metadata preservation**: File permissions, ownership, and attributes
+
+#### 2. Incremental Storage Format
+
+```
+.git-vault/data/
+├── <directory>/
+│   ├── base.tar.gz.aes256gcm.enc     # Initial complete snapshot
+│   ├── base.nonce                    # Base snapshot nonce
+│   ├── changes/
+│   │   ├── 001.delta.aes256gcm.enc   # First change set (multiple files)
+│   │   ├── 001.nonce                 # Change set nonce
+│   │   ├── 002.delta.aes256gcm.enc   # Second change set (multiple files)
+│   │   ├── 002.nonce                 # Change set nonce
+│   │   └── 003.delta.aes256gcm.enc   # Third change set (multiple files)
+│   │   └── 003.nonce                 # Change set nonce
+│   └── current.state                 # Current file list and metadata
+```
+
+#### 3. Change Delta Structure
+
+**Each delta file contains ALL changes from a single commit**, packaged as a tar.gz archive:
+
+-   **Multiple changed files**: All files modified in one commit
+-   **File operations**: Added, modified, or deleted files
+-   **Metadata**: Permissions, timestamps, and file attributes
+-   **Change manifest**: Encrypted list of what changed (for integrity verification)
+
+**Why manifests are essential:**
+
+-   **Integrity verification**: Detect tampering or corruption during restoration
+-   **Efficient restoration**: Know which files to expect without decrypting entire delta
+-   **Security**: Prevent malicious file injection by validating expected file list
+-   **Rollback capability**: Understand what each change contains for selective restoration
+
+#### 4. Restoration Process
+
+1. **Load base snapshot**: Decrypt and extract the initial state
+2. **Apply changes sequentially**: Process each change delta in chronological order
+3. **Handle conflicts**: Later changes override earlier ones for the same file
+4. **Verify integrity**: Check final state against current index
+5. **Restore metadata**: Apply correct permissions and timestamps
+
+### Security Considerations
+
+#### Encryption Strategy
+
+-   **Unique nonces per change**: Each change delta uses a fresh 96-bit nonce
+-   **Same key derivation**: Maintains current AES-256/GCM encryption
+-   **Authenticated encryption**: Each change delta includes authentication tags
+-   **Metadata protection**: File lists and manifests are also encrypted
+
+#### Attack Resistance
+
+-   **No nonce reuse**: Each change gets a cryptographically random nonce
+-   **Tamper detection**: GCM authentication prevents unauthorized modifications
+-   **Rollback protection**: Change sequence numbers prevent replay attacks
+-   **Key isolation**: Same master key, but unique nonces maintain semantic security
+
+### Performance Benefits
+
+#### Storage Efficiency
+
+-   **Reduced growth**: Only changed files contribute to repository size
+-   **Compression benefits**: Similar files across changes compress better
+-   **Deduplication friendly**: Git can deduplicate unchanged encrypted blocks
+-   **Scalable**: Growth rate proportional to actual changes, not vault size
+
+#### Operation Speed
+
+-   **Faster encryption**: Only process files that actually changed
+-   **Incremental backup**: Natural fit for backup and sync workflows
+-   **Selective restoration**: Option to restore specific change ranges
+-   **Parallel processing**: Independent change deltas can be processed concurrently
+
+### Implementation Strategy
+
+#### Phase 1: Core Change Detection
+
+-   Implement file comparison engine (mtime, size, hash verification)
+-   Create change delta generation logic
+-   Develop base snapshot creation
+-   Build restoration algorithm
+
+#### Phase 2: Storage Format
+
+-   Implement incremental storage format
+-   Add compression for change deltas
+-   Create encrypted manifest system
+-   Add integrity verification tools
+
+#### Phase 3: Advanced Features
+
+-   Selective file restoration
+-   Change history browsing
+-   Performance monitoring and optimization
+-   Storage analytics and reporting
+
+### Configuration Options
+
+#### Environment Variables
+
+```bash
+# Maximum files per delta (optional optimization)
+export GIT_VAULT_MAX_FILES_PER_DELTA=100
+
+# Compression level for deltas
+export GIT_VAULT_COMPRESSION_LEVEL=6
+```
+
+### Use Cases and Benefits
+
+#### Large Asset Repositories
+
+-   **Media files**: Images, videos, audio files with occasional updates
+-   **Binary assets**: Game assets, design files, compiled binaries
+-   **Documentation**: Large document sets with incremental updates
+-   **Datasets**: Scientific data, logs, and analytical datasets
+
+#### Development Workflows
+
+-   **Configuration management**: Environment-specific configs with small changes
+-   **Secret rotation**: API keys and certificates with periodic updates
+-   **Dependency caching**: Package caches with incremental additions
+-   **Build artifacts**: Compiled outputs with incremental builds
+
+### Monitoring and Diagnostics
+
+#### Storage Analytics
+
+```bash
+# Show vault storage efficiency
+./git-vault stats
+
+# Example output:
+# Vault: secrets
+# Base size: 150MB
+# Total changes: 45
+# Current size: 165MB
+# Space saved vs full re-encryption: 97.6%
+```
+
+#### Change History
+
+```bash
+# List all changes for a vault
+./git-vault history secrets
+
+# Show specific change details
+./git-vault show-change secrets 042
+
+# Restore to specific change
+./git-vault restore secrets --to-change 038
+```
+
+### Migration from Current System
+
+Since backward compatibility is not required, migration is straightforward:
+
+1. **Backup existing encrypted data**: Save current `.git-vault/data/` directory
+2. **Unlock all vaults**: `./git-vault unlock` to restore plaintext files
+3. **Update git-vault**: Install new incremental version
+4. **Re-lock with new system**: `./git-vault lock` creates base snapshots
+5. **Remove old encrypted files**: Clean up previous format files
+
+The new system will create base snapshots for all directories and begin incremental tracking from that point forward.
+
+This incremental architecture provides a robust solution to the repository growth problem while maintaining security and ease of use. The streamlined approach ensures optimal performance for both small frequent changes and large occasional updates.
