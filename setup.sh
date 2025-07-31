@@ -124,7 +124,6 @@ mkdir -p "$FULL_INSTALL_PATH"
 # Install git-vault files (local or download)
 files_to_install=(
     "locker.sh"
-    "encrypt_decrypt.sh"
     "git_incremental_encrypt.sh"
     "pre-commit-hook.sh"
 )

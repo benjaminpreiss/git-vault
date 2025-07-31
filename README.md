@@ -38,7 +38,6 @@ Download the scripts to your preferred directory (default: `.git-vault/`):
 
 -   `locker.sh` - Main encryption/decryption script
 -   `git_incremental_encrypt.sh` - Bash-native incremental encryption engine
--   `encrypt_decrypt.sh` - Legacy full-directory encryption (for compatibility)
 
 ### 2. Configuration File (Auto-Generated)
 
@@ -154,8 +153,7 @@ After installation, your repository will contain:
 your-repo/
 ├── .git-vault/              # git-vault installation directory
 │   ├── locker.sh           # Main script
-│   ├── git_incremental_encrypt.sh  # Bash-native incremental encryption
-│   └── encrypt_decrypt.sh  # Legacy encryption (for compatibility)
+│   └── git_incremental_encrypt.sh  # Bash-native incremental encryption
 ├── .git-vault/data/         # Encrypted files storage (git-based incremental)
 │   ├── secrets/
 │   │   ├── base.tar.gz.aes256gcm.enc    # Base snapshot
