@@ -246,6 +246,61 @@ else
 fi
 echo
 
+# Test 18: Security test - verify no plaintext files exist in vault
+echo "=== Test 18: Security test - no plaintext files in vault ==="
+echo "Checking for any plaintext files in .git-vault directory..."
+
+# Check for any plaintext files in the entire .git-vault directory
+security_issue_found=false
+plaintext_files=$(find .git-vault -name "*.txt" -o -name "*.key" -o -name "*.conf" -o -name "*.json" -o -name "*.bin" -o -name "*.wav" -o -name "*.mp4" 2>/dev/null | grep -v "\.aes256gcm\.enc$" | grep -v "\.nonce$" | grep -v "\.hash$" || true)
+
+if [ -n "$plaintext_files" ]; then
+    echo "❌ SECURITY ISSUE: Found plaintext files in .git-vault directory!"
+    echo "$plaintext_files"
+    security_issue_found=true
+else
+    echo "✅ No plaintext files found in .git-vault directory"
+fi
+
+# Check specifically for old current.state directories
+current_state_dirs=$(find .git-vault -type d -name "current.state" 2>/dev/null || true)
+if [ -n "$current_state_dirs" ]; then
+    echo "❌ SECURITY ISSUE: Found current.state directories (should not exist)!"
+    echo "$current_state_dirs"
+    security_issue_found=true
+else
+    echo "✅ No current.state directories found (good - using hash-based approach)"
+fi
+
+# Verify only encrypted files and metadata exist
+echo "Verifying vault contains only encrypted files and metadata..."
+vault_files=$(find .git-vault -type f | grep -v "\.aes256gcm\.enc$" | grep -v "\.nonce$" | grep -v "\.hash$" | grep -v "\.sh$" || true)
+if [ -n "$vault_files" ]; then
+    echo "⚠️  WARNING: Found unexpected files in vault (may be OK):"
+    echo "$vault_files"
+else
+    echo "✅ Vault contains only encrypted files, nonces, and hashes"
+fi
+
+# Check git status for any problematic files
+echo "Checking git status for any plaintext files..."
+problematic_staged_files=$(git status --porcelain | grep -E "\.(txt|key|conf|json|bin|wav|mp4)$" | grep -v "\.aes256gcm\.enc$" || true)
+if [ -n "$problematic_staged_files" ]; then
+    echo "❌ SECURITY ISSUE: Plaintext files are staged for commit!"
+    echo "$problematic_staged_files"
+    security_issue_found=true
+else
+    echo "✅ No plaintext files staged for commit"
+fi
+
+if [ "$security_issue_found" = true ]; then
+    echo "❌ SECURITY TEST FAILED: Plaintext files may be exposed!"
+    exit 1
+else
+    echo "✅ SECURITY TEST PASSED: No plaintext exposure detected"
+fi
+echo
+
 echo "=== All bash-native incremental encryption tests completed successfully! ==="
 echo "The bash-native incremental system is working correctly with:"
 echo "- Base snapshot creation"

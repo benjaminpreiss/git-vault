@@ -98,17 +98,13 @@ mkdir -p "$VAULT_DIR/patches"
 # File paths for incremental storage
 BASE_ARCHIVE="$VAULT_DIR/base.tar.gz.aes256gcm.enc"
 BASE_NONCE="$VAULT_DIR/base.nonce"
-CURRENT_STATE="$VAULT_DIR/current.state"
+STATE_HASH="$VAULT_DIR/state.hash"
 
-# Ensure current.state is in .gitignore
-GITIGNORE_FILE=".gitignore"
-if [ -f "$GITIGNORE_FILE" ]; then
-    if ! grep -q "\.git-vault/data/.*/current\.state" "$GITIGNORE_FILE" 2>/dev/null; then
-        echo "" >> "$GITIGNORE_FILE"
-        echo "# git-vault current state directories (not committed)" >> "$GITIGNORE_FILE"
-        echo ".git-vault/data/*/current.state/" >> "$GITIGNORE_FILE"
-    fi
-fi
+# Function to create directory hash for change detection
+create_directory_hash() {
+    local dir="$1"
+    find "$dir" -type f -exec sha256sum {} \; 2>/dev/null | sort | sha256sum | cut -d' ' -f1
+}
 
 # Function to create base snapshot
 create_base_snapshot() {
@@ -140,9 +136,8 @@ create_base_snapshot() {
         return 1
     fi
     
-    # Create a copy of the directory for future diff comparisons
-    rm -rf "$CURRENT_STATE"
-    cp -r "$dir" "$CURRENT_STATE"
+    # Store directory hash for future change detection (no plaintext files!)
+    create_directory_hash "$dir" > "$STATE_HASH"
     
     # Clean up
     rm -rf "$TEMP_DIR"
@@ -151,16 +146,20 @@ create_base_snapshot() {
     return 0
 }
 
-# Function to create incremental patch using bash-native diff
+# Function to create incremental patch using hash-based change detection
 create_patch() {
     local dir="$1"
     
     log_info "Creating incremental patch for $dir..."
     
-    # Check if there are any changes by comparing directories
-    if diff -r "$CURRENT_STATE" "$dir" >/dev/null 2>&1; then
-        log_info "No changes detected in $dir"
-        return 0
+    # Check if there are any changes by comparing directory hashes
+    current_hash=$(create_directory_hash "$dir")
+    if [ -f "$STATE_HASH" ]; then
+        stored_hash=$(cat "$STATE_HASH")
+        if [ "$current_hash" = "$stored_hash" ]; then
+            log_info "No changes detected in $dir"
+            return 0
+        fi
     fi
     
     # Create temporary directory
@@ -171,37 +170,22 @@ create_patch() {
         mkdir -p "$TEMP_DIR"
     fi
     
-    # Create a simple change list instead of complex patches
+    # Create a simple change list - store entire current state
     CHANGES_FILE="$TEMP_DIR/changes.txt"
     
-    # Find all files in both directories
-    find "$CURRENT_STATE" -type f 2>/dev/null | sed "s|^$CURRENT_STATE/||" | sort > "$TEMP_DIR/old_files.txt"
-    find "$dir" -type f 2>/dev/null | sed "s|^$dir/||" | sort > "$TEMP_DIR/new_files.txt"
-    
-    # Start building the changes file
+    # Start building the changes file with current directory contents
     echo "# Incremental changes for $dir" > "$CHANGES_FILE"
-    echo "# Format: ACTION:FILEPATH:CONTENT_OR_HASH" >> "$CHANGES_FILE"
+    echo "# Format: ACTION:FILEPATH:CONTENT" >> "$CHANGES_FILE"
     
-    # Find deleted files
-    comm -23 "$TEMP_DIR/old_files.txt" "$TEMP_DIR/new_files.txt" | while read -r file; do
-        echo "DELETE:$file:" >> "$CHANGES_FILE"
+    # Store all current files (this is the simplest approach without plaintext storage)
+    find "$dir" -type f 2>/dev/null | while read -r filepath; do
+        relative_path="${filepath#$dir/}"
+        echo "REPLACE:$relative_path:$(base64 -w 0 "$filepath")" >> "$CHANGES_FILE"
     done
     
-    # Find new files
-    comm -13 "$TEMP_DIR/old_files.txt" "$TEMP_DIR/new_files.txt" | while read -r file; do
-        echo "CREATE:$file:$(base64 -w 0 "$dir/$file")" >> "$CHANGES_FILE"
-    done
-    
-    # Find modified files
-    comm -12 "$TEMP_DIR/old_files.txt" "$TEMP_DIR/new_files.txt" | while read -r file; do
-        if ! cmp -s "$CURRENT_STATE/$file" "$dir/$file" 2>/dev/null; then
-            echo "MODIFY:$file:$(base64 -w 0 "$dir/$file")" >> "$CHANGES_FILE"
-        fi
-    done
-    
-    # Check if any changes were recorded
+    # Check if any files were recorded
     if [ "$(wc -l < "$CHANGES_FILE")" -le 2 ]; then
-        log_info "No changes detected in $dir"
+        log_info "No files found in $dir"
         rm -rf "$TEMP_DIR"
         return 0
     fi
@@ -229,9 +213,8 @@ create_patch() {
         return 1
     fi
     
-    # Update current state
-    rm -rf "$CURRENT_STATE"
-    cp -r "$dir" "$CURRENT_STATE"
+    # Update stored hash (no plaintext files!)
+    echo "$current_hash" > "$STATE_HASH"
     
     # Clean up
     rm -rf "$TEMP_DIR"
@@ -295,6 +278,13 @@ apply_changes() {
                 echo "$content" | base64 -d > "$target_dir/$filepath"
                 log_debug "Modified file: $filepath"
                 ;;
+            REPLACE)
+                # Create directory if needed
+                mkdir -p "$(dirname "$target_dir/$filepath")"
+                # Decode base64 content and write to file
+                echo "$content" | base64 -d > "$target_dir/$filepath"
+                log_debug "Replaced file: $filepath"
+                ;;
             *)
                 log_debug "Unknown action: $action for file: $filepath"
                 ;;
@@ -325,36 +315,28 @@ unlock() {
         mkdir -p "$DIRECTORY"
     fi
     
-    # Restore base snapshot
-    log_info "Restoring base snapshot..."
-    
-    # Read base nonce
-    BASE_NONCE_VALUE=$(cat "$BASE_NONCE")
-    
-    # Decrypt base archive
-    if ! botan cipher --decrypt --cipher=AES-256/GCM --key="$KEY" --nonce="$BASE_NONCE_VALUE" "$BASE_ARCHIVE" > "$TEMP_DIR/base.tar.gz"; then
-        log_error "Base snapshot decryption failed."
-        rm -rf "$TEMP_DIR"
-        exit 1
-    fi
-    
-    # Extract base snapshot
-    tar -xzf "$TEMP_DIR/base.tar.gz" -C "$DIRECTORY"
-    
-    # Apply patches in order
-    for patch_file in "$VAULT_DIR/patches"/*.patch.aes256gcm.enc; do
-        if [ -f "$patch_file" ]; then
-            patch_name=$(basename "$patch_file" .patch.aes256gcm.enc)
+    # For REPLACE-based patches, we need to clear the directory first and rebuild from scratch
+    # This ensures deleted files are properly removed
+    if [ -d "$VAULT_DIR/patches" ] && [ "$(find "$VAULT_DIR/patches" -name "*.patch.aes256gcm.enc" | wc -l)" -gt 0 ]; then
+        # We have patches, so we'll rebuild from the latest patch (which contains full state)
+        # Find the latest patch
+        latest_patch=$(find "$VAULT_DIR/patches" -name "*.patch.aes256gcm.enc" | sort | tail -1)
+        if [ -n "$latest_patch" ]; then
+            patch_name=$(basename "$latest_patch" .patch.aes256gcm.enc)
             patch_nonce_file="$VAULT_DIR/patches/${patch_name}.nonce"
             
             if [ -f "$patch_nonce_file" ]; then
-                log_info "Applying patch $patch_name..."
+                log_info "Restoring from latest patch $patch_name (contains full state)..."
+                
+                # Clear target directory completely
+                rm -rf "$DIRECTORY"
+                mkdir -p "$DIRECTORY"
                 
                 # Read patch nonce
                 PATCH_NONCE_VALUE=$(cat "$patch_nonce_file")
                 
                 # Decrypt patch file
-                if ! botan cipher --decrypt --cipher=AES-256/GCM --key="$KEY" --nonce="$PATCH_NONCE_VALUE" "$patch_file" > "$TEMP_DIR/changes.txt"; then
+                if ! botan cipher --decrypt --cipher=AES-256/GCM --key="$KEY" --nonce="$PATCH_NONCE_VALUE" "$latest_patch" > "$TEMP_DIR/changes.txt"; then
                     log_error "Patch $patch_name decryption failed."
                     rm -rf "$TEMP_DIR"
                     exit 1
@@ -364,7 +346,23 @@ unlock() {
                 apply_changes "$TEMP_DIR/changes.txt" "$DIRECTORY"
             fi
         fi
-    done
+    else
+        # No patches, restore from base snapshot
+        log_info "Restoring base snapshot..."
+        
+        # Read base nonce
+        BASE_NONCE_VALUE=$(cat "$BASE_NONCE")
+        
+        # Decrypt base archive
+        if ! botan cipher --decrypt --cipher=AES-256/GCM --key="$KEY" --nonce="$BASE_NONCE_VALUE" "$BASE_ARCHIVE" > "$TEMP_DIR/base.tar.gz"; then
+            log_error "Base snapshot decryption failed."
+            rm -rf "$TEMP_DIR"
+            exit 1
+        fi
+        
+        # Extract base snapshot
+        tar -xzf "$TEMP_DIR/base.tar.gz" -C "$DIRECTORY"
+    fi
     
     # Clean up temp directory
     rm -rf "$TEMP_DIR"
