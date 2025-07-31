@@ -224,11 +224,86 @@ Original directories:          Git-based incremental storage:
 
 ## Requirements
 
--   Bash shell
--   Git
--   Botan cryptography library (Botan 3 recommended)
--   Standard Unix tools (tar, sed, grep, etc.)
--   curl or wget (for installation)
+### Required Dependencies
+
+-   **Bash** ≥3.2.57 (most systems have this)
+-   **Git** (any recent version)
+-   **Botan** ≥3.5.0 (cryptography library)
+-   **Standard Unix tools**: tar, find, base64, sed, grep
+
+### Optional Dependencies
+
+-   **curl or wget** (for one-liner installation)
+
+### Installation Instructions by Platform
+
+#### Linux (Ubuntu/Debian)
+
+```bash
+# Install Botan
+sudo apt update
+sudo apt install libbotan-2-dev botan
+
+# Verify installation
+botan version
+```
+
+#### Linux (CentOS/RHEL/Fedora)
+
+```bash
+# Install Botan
+sudo dnf install botan3-devel botan3
+# or for older systems:
+sudo yum install botan2-devel botan2
+
+# Verify installation
+botan version
+```
+
+#### macOS
+
+```bash
+# Install Botan via Homebrew
+brew install botan
+
+# Verify installation
+botan version
+```
+
+#### Alpine Linux (Docker)
+
+```bash
+# Install Botan
+apk add --no-cache botan3
+
+# Verify installation
+botan version
+```
+
+### Dependency Checking
+
+git-vault includes built-in dependency checking. Run this command to verify your system:
+
+```bash
+./git-vault --check-deps
+# or
+./.git-vault/git_incremental_encrypt.sh --check-deps
+```
+
+This will check:
+
+-   ✅ Botan version ≥3.5.0
+-   ✅ Bash version ≥3.2.57
+-   ✅ Required Unix tools (base64, tar, find)
+-   ⚠️ Warnings for suboptimal configurations
+
+### Cross-Platform Compatibility
+
+git-vault automatically detects and uses the best available tools on your system:
+
+-   **Hash functions**: Uses Botan for SHA-256 (consistent across platforms)
+-   **Base64 encoding**: Detects GNU vs BSD variants automatically
+-   **Command compatibility**: Handles differences between Linux, macOS, and other Unix systems
 
 ## Example Workflow
 
@@ -332,7 +407,7 @@ Add this to your existing pre-commit hook:
 
 ## Testing with Docker
 
-git-vault includes a comprehensive Docker testing environment for safe testing and development.
+git-vault includes a comprehensive Docker testing environment for safe testing and development. All test files are organized in the `test/` directory.
 
 ### Quick Test
 
@@ -358,6 +433,15 @@ Start an interactive testing environment:
 ./test-docker.sh build       # Build Docker image only
 ./test-docker.sh clean       # Clean up Docker resources
 ./test-docker.sh help        # Show help
+```
+
+### Test Structure
+
+```
+test/
+├── run-all-tests.sh           # Comprehensive test runner (executed in Docker)
+├── test-git-incremental.sh    # Bash-native incremental encryption tests
+└── test-precommit-hook.sh     # Pre-commit hook behavior tests
 ```
 
 ### Test Environment Details

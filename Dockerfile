@@ -38,13 +38,13 @@ COPY --chown=testuser:testuser . /home/testuser/git-vault-source/
 # Set working directory to test repo
 WORKDIR /home/testuser/test-repo
 
-# Copy test scripts
-COPY --chown=testuser:testuser test-git-incremental.sh /home/testuser/test-git-incremental.sh
-COPY --chown=testuser:testuser test-precommit-hook.sh /home/testuser/test-precommit-hook.sh
+# Copy test scripts from test directory
+COPY --chown=testuser:testuser test/test-git-incremental.sh /home/testuser/test-git-incremental.sh
+COPY --chown=testuser:testuser test/test-precommit-hook.sh /home/testuser/test-precommit-hook.sh
 RUN chmod +x /home/testuser/test-git-incremental.sh /home/testuser/test-precommit-hook.sh
 
 # Create comprehensive test runner
-COPY --chown=testuser:testuser run-all-tests.sh /home/testuser/run-all-tests.sh
+COPY --chown=testuser:testuser test/run-all-tests.sh /home/testuser/run-all-tests.sh
 RUN chmod +x /home/testuser/run-all-tests.sh
 
 # Default command

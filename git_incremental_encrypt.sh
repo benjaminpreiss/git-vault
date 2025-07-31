@@ -12,13 +12,19 @@ fi
 # Function to show usage
 usage() {
     echo "Usage: $0 <directory> <operation> <key> [<file_path>] [--quiet]"
+    echo "       $0 --check-deps"
+    echo ""
+    echo "Arguments:"
     echo "  <directory>: The directory to process (can be relative to git repo root)"
     echo "  <operation>: Either 'lock' or 'unlock'"
     echo "  <key>: 256-bit key in hexadecimal format (64 characters)"
     echo "  [<file_path>]: Optional path to encrypted files (default: .git-vault/data/)"
     echo "  [--quiet]: Suppress non-error output"
     echo ""
-    echo "This script implements incremental encryption using git diff patches."
+    echo "Options:"
+    echo "  --check-deps: Check system dependencies and versions"
+    echo ""
+    echo "This script implements incremental encryption using bash-native utilities."
     echo "Only changed files are re-encrypted, dramatically reducing repository growth."
 }
 
@@ -38,6 +44,163 @@ log_debug() {
 log_error() {
     echo "Error: $1" >&2
 }
+
+# Function to check if a version meets minimum requirements
+version_compare() {
+    local version="$1"
+    local required="$2"
+    
+    # Convert versions to comparable format (remove non-numeric characters except dots)
+    local clean_version=$(echo "$version" | sed 's/[^0-9.]//g')
+    local clean_required=$(echo "$required" | sed 's/[^0-9.]//g')
+    
+    # Use sort -V for version comparison if available, otherwise use basic comparison
+    if command -v sort >/dev/null 2>&1 && sort --version-sort /dev/null >/dev/null 2>&1; then
+        local highest=$(printf "%s\n%s" "$clean_version" "$clean_required" | sort -V | tail -1)
+        [ "$highest" = "$clean_version" ]
+    else
+        # Fallback: basic numeric comparison (assumes X.Y.Z format)
+        local IFS='.'
+        set -- $clean_version
+        local v1_major=$1 v1_minor=$2 v1_patch=$3
+        set -- $clean_required
+        local r_major=$1 r_minor=$2 r_patch=$3
+        
+        # Compare major.minor.patch
+        if [ "$v1_major" -gt "$r_major" ]; then
+            return 0
+        elif [ "$v1_major" -eq "$r_major" ]; then
+            if [ "$v1_minor" -gt "$r_minor" ]; then
+                return 0
+            elif [ "$v1_minor" -eq "$r_minor" ]; then
+                [ "${v1_patch:-0}" -ge "${r_patch:-0}" ]
+            else
+                return 1
+            fi
+        else
+            return 1
+        fi
+    fi
+}
+
+# Function to check system dependencies and versions
+check_dependencies() {
+    local errors=0
+    
+    log_info "Checking system dependencies..."
+    
+    # Check Botan (required)
+    if ! command -v botan >/dev/null 2>&1; then
+        log_error "Botan is required but not installed. Please install Botan 3.6.1 or later."
+        log_error "Installation: https://botan.randombit.net/handbook/building.html"
+        errors=$((errors + 1))
+    else
+        # Try different ways to get Botan version
+        local botan_version=""
+        if botan version >/dev/null 2>&1; then
+            botan_version=$(botan version 2>/dev/null | head -1 | awk '{print $2}')
+        fi
+        
+        # Alternative version extraction methods
+        if [ -z "$botan_version" ]; then
+            botan_version=$(botan version 2>/dev/null | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1)
+        fi
+        
+        if [ -z "$botan_version" ]; then
+            log_error "Could not determine Botan version. Please ensure Botan 3.6.1 or later is installed."
+            errors=$((errors + 1))
+        elif ! version_compare "$botan_version" "3.5.0"; then
+            log_error "Botan version $botan_version found, but 3.5.0 or later is required."
+            log_error "Please upgrade Botan: https://botan.randombit.net/handbook/building.html"
+            errors=$((errors + 1))
+        else
+            log_info "✅ Botan $botan_version (meets requirement: ≥3.5.0)"
+        fi
+    fi
+    
+    # Check bash version (required 3.2.57+)
+    local bash_version=$(bash --version 2>/dev/null | head -1 | sed 's/.*version \([0-9.]*\).*/\1/')
+    if [ -n "$bash_version" ]; then
+        if version_compare "$bash_version" "3.2.57"; then
+            log_info "✅ Bash $bash_version (meets requirement: ≥3.2.57)"
+        else
+            log_error "Bash $bash_version found, but 3.2.57 or later is required."
+            errors=$((errors + 1))
+        fi
+    fi
+    
+    # Check base64 availability
+    if command -v base64 >/dev/null 2>&1; then
+        log_info "✅ base64 command available"
+    else
+        log_error "base64 command not found. This is required for file encoding."
+        errors=$((errors + 1))
+    fi
+    
+    # Check tar availability
+    if command -v tar >/dev/null 2>&1; then
+        log_info "✅ tar command available"
+    else
+        log_error "tar command not found. This is required for creating archives."
+        errors=$((errors + 1))
+    fi
+    
+    # Check find availability
+    if command -v find >/dev/null 2>&1; then
+        log_info "✅ find command available"
+    else
+        log_error "find command not found. This is required for file operations."
+        errors=$((errors + 1))
+    fi
+    
+    if [ $errors -gt 0 ]; then
+        log_error "Found $errors dependency issues. Please resolve them before using git-vault."
+        return 1
+    else
+        log_info "✅ All dependencies satisfied"
+        return 0
+    fi
+}
+
+# Cross-platform base64 encode function
+base64_encode() {
+    if command -v base64 >/dev/null 2>&1; then
+        # Check if this is GNU base64 (Linux) or BSD base64 (macOS)
+        if base64 --help 2>&1 | grep -q "wrap"; then
+            # GNU base64 (Linux)
+            base64 -w 0
+        else
+            # BSD base64 (macOS) - no line wrapping by default
+            base64
+        fi
+    else
+        # Fallback using openssl
+        openssl base64 -A
+    fi
+}
+
+# Cross-platform base64 decode function
+base64_decode() {
+    if command -v base64 >/dev/null 2>&1; then
+        # Check if this is GNU base64 (Linux) or BSD base64 (macOS)
+        if base64 --help 2>&1 | grep -q "decode"; then
+            # GNU base64 (Linux)
+            base64 -d
+        else
+            # BSD base64 (macOS)
+            base64 -D
+        fi
+    else
+        # Fallback using openssl
+        openssl base64 -d
+    fi
+}
+
+# Handle special commands first
+if [ "$1" = "--check-deps" ]; then
+    check_dependencies
+    exit $?
+fi
 
 # Check if at least three arguments are provided
 if [ $# -lt 3 ]; then
@@ -68,6 +231,13 @@ fi
 
 # Override FILE_PATH to use .git-vault/data/
 FILE_PATH="$DATA_DIR/"
+
+# Check dependencies before proceeding (only if explicitly requested)
+# Skip automatic dependency checking to avoid breaking existing workflows
+if [ "$1" = "--check-deps" ]; then
+    # This case is handled earlier, but this comment explains the logic
+    :
+fi
 
 # Validate the key (hex encoded 256-bit key is 64 characters long)
 if ! echo "$KEY" | grep -E '^[0-9A-Fa-f]{64}$' >/dev/null 2>&1; then
@@ -100,10 +270,29 @@ BASE_ARCHIVE="$VAULT_DIR/base.tar.gz.aes256gcm.enc"
 BASE_NONCE="$VAULT_DIR/base.nonce"
 STATE_HASH="$VAULT_DIR/state.hash"
 
-# Function to create directory hash for change detection
+# Function to create directory hash for change detection using Botan
 create_directory_hash() {
     local dir="$1"
-    find "$dir" -type f -exec sha256sum {} \; 2>/dev/null | sort | sha256sum | cut -d' ' -f1
+    
+    # Create a temporary file to store file hashes
+    if command -v mktemp >/dev/null 2>&1; then
+        local temp_file=$(mktemp)
+    else
+        local temp_file="/tmp/git-vault-hash-$$-$(date +%s)"
+    fi
+    
+    # Hash all files in directory using Botan and sort for consistency
+    find "$dir" -type f 2>/dev/null | sort | while read -r filepath; do
+        botan hash --algo=SHA-256 "$filepath" 2>/dev/null || echo "ERROR: Failed to hash $filepath"
+    done > "$temp_file"
+    
+    # Hash the combined hashes to get a single directory hash
+    local dir_hash=$(botan hash --algo=SHA-256 "$temp_file" 2>/dev/null | cut -d' ' -f1)
+    
+    # Clean up
+    rm -f "$temp_file"
+    
+    echo "$dir_hash"
 }
 
 # Function to create base snapshot
@@ -180,7 +369,7 @@ create_patch() {
     # Store all current files (this is the simplest approach without plaintext storage)
     find "$dir" -type f 2>/dev/null | while read -r filepath; do
         relative_path="${filepath#$dir/}"
-        echo "REPLACE:$relative_path:$(base64 -w 0 "$filepath")" >> "$CHANGES_FILE"
+        echo "REPLACE:$relative_path:$(base64_encode < "$filepath")" >> "$CHANGES_FILE"
     done
     
     # Check if any files were recorded
@@ -190,8 +379,10 @@ create_patch() {
         return 0
     fi
     
-    # Get next patch number
-    PATCH_NUM=$(find "$VAULT_DIR/patches" -name "*.patch.aes256gcm.enc" | wc -l | tr -d ' ')
+    # Get next patch number (cross-platform)
+    PATCH_NUM=$(find "$VAULT_DIR/patches" -name "*.patch.aes256gcm.enc" 2>/dev/null | wc -l)
+    # Remove any whitespace (cross-platform)
+    PATCH_NUM=$(echo "$PATCH_NUM" | sed 's/[[:space:]]//g')
     PATCH_NUM=$((PATCH_NUM + 1))
     PATCH_NUM_PADDED=$(printf "%03d" "$PATCH_NUM")
     
@@ -268,21 +459,21 @@ apply_changes() {
                 # Create directory if needed
                 mkdir -p "$(dirname "$target_dir/$filepath")"
                 # Decode base64 content and write to file
-                echo "$content" | base64 -d > "$target_dir/$filepath"
+                echo "$content" | base64_decode > "$target_dir/$filepath"
                 log_debug "Created file: $filepath"
                 ;;
             MODIFY)
                 # Create directory if needed
                 mkdir -p "$(dirname "$target_dir/$filepath")"
                 # Decode base64 content and write to file
-                echo "$content" | base64 -d > "$target_dir/$filepath"
+                echo "$content" | base64_decode > "$target_dir/$filepath"
                 log_debug "Modified file: $filepath"
                 ;;
             REPLACE)
                 # Create directory if needed
                 mkdir -p "$(dirname "$target_dir/$filepath")"
                 # Decode base64 content and write to file
-                echo "$content" | base64 -d > "$target_dir/$filepath"
+                echo "$content" | base64_decode > "$target_dir/$filepath"
                 log_debug "Replaced file: $filepath"
                 ;;
             *)
@@ -317,7 +508,9 @@ unlock() {
     
     # For REPLACE-based patches, we need to clear the directory first and rebuild from scratch
     # This ensures deleted files are properly removed
-    if [ -d "$VAULT_DIR/patches" ] && [ "$(find "$VAULT_DIR/patches" -name "*.patch.aes256gcm.enc" | wc -l)" -gt 0 ]; then
+    patch_count=$(find "$VAULT_DIR/patches" -name "*.patch.aes256gcm.enc" 2>/dev/null | wc -l)
+    patch_count=$(echo "$patch_count" | sed 's/[[:space:]]//g')
+    if [ -d "$VAULT_DIR/patches" ] && [ "$patch_count" -gt 0 ]; then
         # We have patches, so we'll rebuild from the latest patch (which contains full state)
         # Find the latest patch
         latest_patch=$(find "$VAULT_DIR/patches" -name "*.patch.aes256gcm.enc" | sort | tail -1)
