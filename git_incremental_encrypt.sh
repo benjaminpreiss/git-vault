@@ -507,7 +507,9 @@ create_incremental_changes() {
     # Find new files (in current but not in previous)
     comm -23 "$current_files" "$prev_files" | while IFS= read -r filepath; do
         if [ -n "$filepath" ] && [ -f "$current_dir/$filepath" ]; then
-            echo "CREATE:$filepath:$(base64_encode < "$current_dir/$filepath")" >> "$changes_file"
+            # Ensure base64 output is on a single line
+            content_b64=$(base64_encode < "$current_dir/$filepath" | tr -d '\n\r')
+            echo "CREATE:$filepath:$content_b64" >> "$changes_file"
             log_debug "New file: $filepath"
         fi
     done
@@ -528,7 +530,19 @@ create_incremental_changes() {
             prev_hash=$(botan hash --algo=SHA-256 "$prev_dir/$filepath" 2>/dev/null | cut -d' ' -f1)
             
             if [ "$current_hash" != "$prev_hash" ]; then
-                echo "MODIFY:$filepath:$(base64_encode < "$current_dir/$filepath")" >> "$changes_file"
+                # Check file size to determine if we should use binary diff
+                current_size=$(wc -c < "$current_dir/$filepath")
+                prev_size=$(wc -c < "$prev_dir/$filepath")
+                
+                # Use binary diff for files larger than 1KB to save space
+                if [ "$current_size" -gt 1024 ] || [ "$prev_size" -gt 1024 ]; then
+                    # Create binary diff using a simple approach
+                    create_binary_diff "$current_dir/$filepath" "$prev_dir/$filepath" "$changes_file" "$filepath"
+                else
+                    # For small files, store entire content
+                    content_b64=$(base64_encode < "$current_dir/$filepath" | tr -d '\n\r')
+                    echo "MODIFY:$filepath:$content_b64" >> "$changes_file"
+                fi
                 log_debug "Modified file: $filepath"
             fi
         fi
@@ -537,6 +551,92 @@ create_incremental_changes() {
     # Clean up temporary files
     rm -f "$current_files" "$prev_files"
 }
+
+# Function to create binary diff using byte-level comparison
+create_binary_diff() {
+    local current_file="$1"
+    local prev_file="$2"
+    local changes_file="$3"
+    local filepath="$4"
+    
+    # Create temporary files for diff processing
+    if command -v mktemp >/dev/null 2>&1; then
+        temp_diff=$(mktemp)
+        temp_chunks=$(mktemp)
+    else
+        temp_diff="/tmp/git-vault-diff-$$-$(date +%s)"
+        temp_chunks="/tmp/git-vault-chunks-$$-$(date +%s)"
+    fi
+    
+    # Use cmp to find byte differences
+    if cmp -l "$prev_file" "$current_file" 2>/dev/null > "$temp_diff"; then
+        # Files are identical (shouldn't happen as we already checked hashes)
+        rm -f "$temp_diff" "$temp_chunks"
+        return 0
+    fi
+    
+    # Process cmp output to create efficient diff chunks
+    # cmp -l output format: byte_position old_byte new_byte
+    local chunk_start=""
+    local chunk_data=""
+    local prev_pos=0
+    local chunk_size=0
+    local max_chunk_size=1024  # Maximum chunk size in bytes
+    
+    # Read cmp output and group consecutive changes into chunks
+    while read -r pos old_byte new_byte; do
+        if [ -n "$pos" ]; then
+            # Convert to 0-based indexing
+            pos=$((pos - 1))
+            
+            # If this is the start of a new chunk or gap is too large
+            if [ -z "$chunk_start" ] || [ $((pos - prev_pos)) -gt 64 ] || [ $chunk_size -gt $max_chunk_size ]; then
+                # Save previous chunk if it exists
+                if [ -n "$chunk_start" ] && [ -n "$chunk_data" ]; then
+                    chunk_data_b64=$(echo -n "$chunk_data" | base64_encode | tr -d '\n\r')
+                    echo "BINDIFF:$filepath:$chunk_start:$chunk_data_b64" >> "$changes_file"
+                fi
+                
+                # Start new chunk
+                chunk_start="$pos"
+                chunk_data=""
+                chunk_size=0
+            fi
+            
+            # Add padding bytes if there's a gap
+            while [ $((chunk_start + chunk_size)) -lt $pos ]; do
+                # Read the byte from current file at this position
+                byte_val=$(dd if="$current_file" bs=1 skip=$((chunk_start + chunk_size)) count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
+                if [ -n "$byte_val" ]; then
+                    chunk_data="$chunk_data$(printf "\\x$byte_val")"
+                fi
+                chunk_size=$((chunk_size + 1))
+            done
+            
+            # Add the changed byte
+            new_byte_hex=$(printf "%02x" "$new_byte")
+            chunk_data="$chunk_data$(printf "\\x$new_byte_hex")"
+            chunk_size=$((chunk_size + 1))
+            prev_pos=$pos
+        fi
+    done < "$temp_diff"
+    
+    # Save final chunk
+    if [ -n "$chunk_start" ] && [ -n "$chunk_data" ]; then
+        chunk_data_b64=$(echo -n "$chunk_data" | base64_encode | tr -d '\n\r')
+        echo "BINDIFF:$filepath:$chunk_start:$chunk_data_b64" >> "$changes_file"
+    fi
+    
+    # If no chunks were created, fall back to storing entire file
+    if [ ! -s "$changes_file" ] || ! grep -q "BINDIFF:$filepath:" "$changes_file"; then
+        content_b64=$(base64_encode < "$current_file" | tr -d '\n\r')
+        echo "MODIFY:$filepath:$content_b64" >> "$changes_file"
+    fi
+    
+    # Clean up
+    rm -f "$temp_diff" "$temp_chunks"
+}
+
 
 # Function to lock (encrypt) directory
 lock() {
@@ -570,7 +670,10 @@ apply_changes() {
         fi
         
         # Parse the line format: ACTION:FILEPATH:CONTENT_OR_HASH
-        IFS=':' read -r action filepath content <<< "$line"
+        # Handle base64 content that may contain colons by only splitting on first two colons
+        action=$(echo "$line" | cut -d':' -f1)
+        filepath=$(echo "$line" | cut -d':' -f2)
+        content=$(echo "$line" | cut -d':' -f3-)
         
         case "$action" in
             DELETE)
@@ -600,12 +703,46 @@ apply_changes() {
                 echo "$content" | base64_decode > "$target_dir/$filepath"
                 log_debug "Replaced file: $filepath"
                 ;;
+            BINDIFF)
+                # Apply binary diff patch
+                # Format: BINDIFF:filepath:position:base64_data
+                # The content field contains "position:base64_data"
+                local position=$(echo "$content" | cut -d':' -f1)
+                local patch_data=$(echo "$content" | cut -d':' -f2-)
+                
+                # Create directory if needed
+                mkdir -p "$(dirname "$target_dir/$filepath")"
+                
+                # Decode patch data and apply at specified position
+                if [ -f "$target_dir/$filepath" ]; then
+                    # Create temporary file for patching
+                    if command -v mktemp >/dev/null 2>&1; then
+                        temp_patch_file=$(mktemp)
+                    else
+                        temp_patch_file="/tmp/git-vault-patch-$$-$(date +%s)"
+                    fi
+                    
+                    # Copy original file
+                    cp "$target_dir/$filepath" "$temp_patch_file"
+                    
+                    # Apply patch at position
+                    echo "$patch_data" | base64_decode | dd of="$temp_patch_file" bs=1 seek="$position" conv=notrunc 2>/dev/null
+                    
+                    # Replace original with patched version
+                    mv "$temp_patch_file" "$target_dir/$filepath"
+                    
+                    log_debug "Applied binary diff to file: $filepath at position $position"
+                else
+                    log_debug "Warning: Cannot apply binary diff to non-existent file: $filepath"
+                fi
+                ;;
             *)
                 log_debug "Unknown action: $action for file: $filepath"
                 ;;
         esac
     done < "$changes_file"
 }
+
 
 # Function to unlock (decrypt) directory
 unlock() {

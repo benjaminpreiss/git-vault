@@ -104,6 +104,12 @@ main() {
         "/home/testuser/test-state-hash-staging.sh" \
         "/home/testuser/test-state-hash-staging"
     
+    # Test 4: Large file efficiency test
+    run_test_suite \
+        "Large File Efficiency Test" \
+        "/home/testuser/test-large-file-efficiency.sh" \
+        "/home/testuser/test-large-file-efficiency"
+    
     # Final results
     print_header "Test Results Summary"
     

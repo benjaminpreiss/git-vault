@@ -9,6 +9,7 @@ RUN apk add --no-cache \
     tar \
     sed \
     grep \
+    patch \
     botan3
 
 # Verify Botan 3 installation
@@ -42,7 +43,8 @@ WORKDIR /home/testuser/test-repo
 COPY --chown=testuser:testuser test/test-git-incremental.sh /home/testuser/test-git-incremental.sh
 COPY --chown=testuser:testuser test/test-precommit-hook.sh /home/testuser/test-precommit-hook.sh
 COPY --chown=testuser:testuser test/test-state-hash-staging.sh /home/testuser/test-state-hash-staging.sh
-RUN chmod +x /home/testuser/test-git-incremental.sh /home/testuser/test-precommit-hook.sh /home/testuser/test-state-hash-staging.sh
+COPY --chown=testuser:testuser test/test-large-file-efficiency.sh /home/testuser/test-large-file-efficiency.sh
+RUN chmod +x /home/testuser/test-git-incremental.sh /home/testuser/test-precommit-hook.sh /home/testuser/test-state-hash-staging.sh /home/testuser/test-large-file-efficiency.sh
 
 # Create comprehensive test runner
 COPY --chown=testuser:testuser test/run-all-tests.sh /home/testuser/run-all-tests.sh
