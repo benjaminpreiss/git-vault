@@ -125,6 +125,8 @@ mkdir -p "$FULL_INSTALL_PATH"
 files_to_install=(
     "locker.sh"
     "encrypt_decrypt.sh"
+    "git_incremental_encrypt.sh"
+    "pre-commit-hook.sh"
 )
 
 # Check if we have local source files (for testing/development)
@@ -244,31 +246,10 @@ print_info "Setting up pre-commit hook..."
 # Create hooks directory if it doesn't exist
 mkdir -p "$HOOKS_DIR"
 
-# Git-vault hook content
+# Git-vault hook content - simple one-liner that calls the dedicated script
 GIT_VAULT_HOOK_CONTENT='
 # === git-vault pre-commit hook START ===
-# Automatically encrypts directories before commit
-
-# Get the git repo root directory
-repo_root=$(git rev-parse --show-toplevel)
-
-# Run the locker.sh script in quiet mode
-"${repo_root}/'$INSTALL_DIR'/locker.sh" --quiet lock
-
-# Check the exit status of the script
-if [ $? -ne 0 ]; then
-    echo "git-vault: encryption failed" >&2
-    exit 1
-fi
-
-# Stage encrypted files silently from .git-vault/data/
-if [ -d "$repo_root/.git-vault/data" ]; then
-    find "$repo_root/.git-vault/data" -name "*.nonce" -o -name "*.tar.gz.aes256gcm.enc" 2>/dev/null | while IFS= read -r file; do
-        if [ -f "$file" ]; then
-            git add "$file" 2>/dev/null
-        fi
-    done
-fi
+exec "$(git rev-parse --show-toplevel)/'$INSTALL_DIR'/pre-commit-hook.sh"
 # === git-vault pre-commit hook END ===
 '
 

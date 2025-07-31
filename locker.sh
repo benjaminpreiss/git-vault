@@ -208,11 +208,11 @@ lock() {
     echo "$DIRECTORIES" | while IFS= read -r dir; do
         if [ -n "$dir" ]; then
             if [ -d "$dir" ]; then
-                log_info "Locking $dir"
+                log_info "Locking $dir (bash-native incremental)"
                 if [ "$QUIET_MODE" = true ]; then
-                    "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" encrypt "$GIT_VAULT_PASS" --quiet
+                    "$SCRIPT_DIR/git_incremental_encrypt.sh" "$dir" lock "$GIT_VAULT_PASS" --quiet
                 else
-                    "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" encrypt "$GIT_VAULT_PASS"
+                    "$SCRIPT_DIR/git_incremental_encrypt.sh" "$dir" lock "$GIT_VAULT_PASS"
                 fi
             else
                 log_info "Warning: Directory '$dir' not found, skipping."
@@ -230,29 +230,29 @@ unlock() {
     
     echo "$DIRECTORIES" | while IFS= read -r dir; do
         if [ -n "$dir" ]; then
-            # Check if encrypted files exist for this directory
-            # Use the same path structure as encrypt_decrypt.sh
+            # Check if git-based incremental vault exists for this directory
             BASE_NAME=$(basename "$dir")
             DATA_SUBDIR=".git-vault/data/$(dirname "$dir")"
             
             # Handle root-level directories (no subdirectory)
             if [ "$(dirname "$dir")" = "." ]; then
-                ENCRYPTED_ARCHIVE=".git-vault/data/${BASE_NAME}.tar.gz.aes256gcm.enc"
-                NONCE_FILE=".git-vault/data/${BASE_NAME}.nonce"
+                VAULT_DIR=".git-vault/data/${BASE_NAME}"
             else
-                ENCRYPTED_ARCHIVE="${DATA_SUBDIR}/${BASE_NAME}.tar.gz.aes256gcm.enc"
-                NONCE_FILE="${DATA_SUBDIR}/${BASE_NAME}.nonce"
+                VAULT_DIR="${DATA_SUBDIR}/${BASE_NAME}"
             fi
             
-            if [ -f "$ENCRYPTED_ARCHIVE" ] && [ -f "$NONCE_FILE" ]; then
-                log_info "Unlocking $dir"
+            BASE_ARCHIVE="$VAULT_DIR/base.tar.gz.aes256gcm.enc"
+            BASE_NONCE="$VAULT_DIR/base.nonce"
+            
+            if [ -f "$BASE_ARCHIVE" ] && [ -f "$BASE_NONCE" ]; then
+                log_info "Unlocking $dir (bash-native incremental)"
                 if [ "$QUIET_MODE" = true ]; then
-                    "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" decrypt "$GIT_VAULT_PASS" --quiet
+                    "$SCRIPT_DIR/git_incremental_encrypt.sh" "$dir" unlock "$GIT_VAULT_PASS" --quiet
                 else
-                    "$SCRIPT_DIR/encrypt_decrypt.sh" "$dir" decrypt "$GIT_VAULT_PASS"
+                    "$SCRIPT_DIR/git_incremental_encrypt.sh" "$dir" unlock "$GIT_VAULT_PASS"
                 fi
             else
-                log_info "Warning: No encrypted files found for '$dir' (looking for $ENCRYPTED_ARCHIVE and $NONCE_FILE)"
+                log_info "Warning: No bash-native incremental vault found for '$dir' (looking for $BASE_ARCHIVE and $BASE_NONCE)"
             fi
         fi
     done
