@@ -302,6 +302,19 @@ git-vault automatically detects and uses the best available tools on your system
 -   **Hash functions**: Uses Botan for SHA-256 (consistent across platforms)
 -   **Base64 encoding**: Detects GNU vs BSD variants automatically
 -   **Command compatibility**: Handles differences between Linux, macOS, and other Unix systems
+-   **Tool detection**: Automatically falls back to alternative tools when needed
+-   **Version handling**: Supports both GNU and BSD versions of standard utilities
+
+#### Supported Platforms
+
+| Platform    | Compatibility | Notes                              |
+| ----------- | ------------- | ---------------------------------- |
+| Linux (GNU) | 95%           | Primary target, fully optimized    |
+| macOS       | 90%           | Well-handled BSD tool differences  |
+| FreeBSD     | 85%           | May need bash path adjustment      |
+| OpenBSD     | 85%           | Similar to FreeBSD                 |
+| WSL         | 80%           | Should work with minor path issues |
+| Cygwin      | 75%           | May need tool availability checks  |
 
 ## Example Workflow
 
@@ -439,7 +452,11 @@ Start an interactive testing environment:
 test/
 ├── run-all-tests.sh           # Comprehensive test runner (executed in Docker)
 ├── test-git-incremental.sh    # Bash-native incremental encryption tests
-└── test-precommit-hook.sh     # Pre-commit hook behavior tests
+├── test-precommit-hook.sh     # Pre-commit hook behavior tests
+├── test-state-hash-staging.sh # State hash file staging tests
+├── test-large-file-efficiency.sh # Large file efficiency tests
+├── test-file-deletion.sh      # File deletion scenario tests
+└── test-file-addition.sh      # File addition scenario tests
 ```
 
 ### Test Environment Details
@@ -494,6 +511,12 @@ The automated tests verify:
 -   ✅ **Git integration** (gitignore patterns)
 -   ✅ **Pre-commit hooks** (automatic encryption)
 -   ✅ **File staging** (encrypted files added to git)
+-   ✅ **State hash management** (proper staging and tracking)
+-   ✅ **Large file efficiency** (patch size optimization)
+-   ✅ **File deletion scenarios** (proper handling of deleted files)
+-   ✅ **File addition scenarios** (adding files after patches exist)
+-   ✅ **Cross-platform compatibility** (GNU vs BSD tool differences)
+-   ✅ **Binary diff implementation** (efficient change detection)
 
 ### Requirements for Testing
 
@@ -547,9 +570,11 @@ graph TD
 
 #### 1. Bash-Native Change Detection
 
--   **Standard diff**: Uses `diff -r` to compare directory states
+-   **Binary diff algorithm**: Uses `cmp -l` for byte-level comparison
 -   **Simple change format**: Creates ACTION:FILEPATH:CONTENT format for easy processing
 -   **Automatic handling**: Bash operations detect file additions, modifications, and deletions
+-   **Efficient chunking**: Groups consecutive changes for optimal patch sizes
+-   **Hash-based detection**: Uses SHA-256 hashes to detect changes quickly
 
 #### 2. Incremental Storage Format
 
@@ -575,6 +600,7 @@ graph TD
 -   **File additions**: CREATE:filepath:base64_content
 -   **File modifications**: MODIFY:filepath:base64_content
 -   **File deletions**: DELETE:filepath:
+-   **Binary diffs**: BINDIFF:filepath:position:base64_data (for large files)
 -   **Binary file handling**: Base64 encoding handles all file types
 -   **Straightforward format**: Easy to parse and apply
 

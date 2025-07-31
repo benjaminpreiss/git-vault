@@ -110,6 +110,18 @@ main() {
         "/home/testuser/test-large-file-efficiency.sh" \
         "/home/testuser/test-large-file-efficiency"
     
+    # Test 5: File deletion scenarios test
+    run_test_suite \
+        "File Deletion Scenarios Test" \
+        "/home/testuser/test-file-deletion.sh" \
+        "/home/testuser/test-file-deletion"
+    
+    # Test 6: File addition scenarios test
+    run_test_suite \
+        "File Addition Scenarios Test" \
+        "/home/testuser/test-file-addition.sh" \
+        "/home/testuser/test-file-addition"
+    
     # Final results
     print_header "Test Results Summary"
     
@@ -129,6 +141,9 @@ main() {
         echo "  ✅ Encryption/decryption maintains data integrity"
         echo "  ✅ Space-efficient storage with incremental patches"
         echo "  ✅ Full unlock/restore functionality works correctly"
+        echo "  ✅ File deletion scenarios handled correctly"
+        echo "  ✅ File addition scenarios handled correctly"
+        echo "  ✅ Large file efficiency optimizations work"
         echo
         exit 0
     else

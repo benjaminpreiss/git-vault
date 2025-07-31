@@ -420,39 +420,7 @@ create_patch() {
 restore_previous_state() {
     local target_dir="$1"
     
-    # Check if we have any patches - if so, restore from the latest patch
-    if [ -d "$VAULT_DIR/patches" ]; then
-        latest_patch=$(find "$VAULT_DIR/patches" -name "*.patch.aes256gcm.enc" 2>/dev/null | sort | tail -1)
-        if [ -n "$latest_patch" ]; then
-            patch_name=$(basename "$latest_patch" .patch.aes256gcm.enc)
-            patch_nonce_file="$VAULT_DIR/patches/${patch_name}.nonce"
-            
-            if [ -f "$patch_nonce_file" ]; then
-                log_debug "Restoring previous state from latest patch $patch_name"
-                
-                # Read patch nonce
-                PATCH_NONCE_VALUE=$(cat "$patch_nonce_file")
-                
-                # Create temporary file for decrypted patch
-                if command -v mktemp >/dev/null 2>&1; then
-                    temp_patch_file=$(mktemp)
-                else
-                    temp_patch_file="/tmp/git-vault-patch-$$-$(date +%s)"
-                fi
-                
-                # Decrypt patch file
-                if botan cipher --decrypt --cipher=AES-256/GCM --key="$KEY" --nonce="$PATCH_NONCE_VALUE" "$latest_patch" > "$temp_patch_file"; then
-                    # Apply changes to get previous state
-                    apply_changes "$temp_patch_file" "$target_dir"
-                fi
-                
-                rm -f "$temp_patch_file"
-                return 0
-            fi
-        fi
-    fi
-    
-    # No patches exist, restore from base snapshot
+    # First, restore from base snapshot if it exists
     if [ -f "$BASE_ARCHIVE" ] && [ -f "$BASE_NONCE" ]; then
         log_debug "Restoring previous state from base snapshot"
         
@@ -473,6 +441,46 @@ restore_previous_state() {
         fi
         
         rm -f "$temp_base_file"
+    fi
+    
+    # Then apply all patches sequentially if they exist
+    if [ -d "$VAULT_DIR/patches" ]; then
+        patch_count=$(find "$VAULT_DIR/patches" -name "*.patch.aes256gcm.enc" 2>/dev/null | wc -l)
+        patch_count=$(echo "$patch_count" | sed 's/[[:space:]]//g')
+        
+        if [ "$patch_count" -gt 0 ]; then
+            log_debug "Applying $patch_count patches to restore previous state"
+            
+            # Apply patches in order
+            find "$VAULT_DIR/patches" -name "*.patch.aes256gcm.enc" | sort | while IFS= read -r patch_file; do
+                if [ -n "$patch_file" ]; then
+                    patch_name=$(basename "$patch_file" .patch.aes256gcm.enc)
+                    patch_nonce_file="$VAULT_DIR/patches/${patch_name}.nonce"
+                    
+                    if [ -f "$patch_nonce_file" ]; then
+                        log_debug "Applying patch $patch_name to previous state"
+                        
+                        # Read patch nonce
+                        PATCH_NONCE_VALUE=$(cat "$patch_nonce_file")
+                        
+                        # Create temporary file for decrypted patch
+                        if command -v mktemp >/dev/null 2>&1; then
+                            temp_patch_file=$(mktemp)
+                        else
+                            temp_patch_file="/tmp/git-vault-patch-$$-$(date +%s)"
+                        fi
+                        
+                        # Decrypt patch file
+                        if botan cipher --decrypt --cipher=AES-256/GCM --key="$KEY" --nonce="$PATCH_NONCE_VALUE" "$patch_file" > "$temp_patch_file"; then
+                            # Apply changes to get cumulative previous state
+                            apply_changes "$temp_patch_file" "$target_dir"
+                        fi
+                        
+                        rm -f "$temp_patch_file"
+                    fi
+                fi
+            done
+        fi
     fi
 }
 

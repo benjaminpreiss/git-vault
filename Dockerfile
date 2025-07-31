@@ -44,7 +44,9 @@ COPY --chown=testuser:testuser test/test-git-incremental.sh /home/testuser/test-
 COPY --chown=testuser:testuser test/test-precommit-hook.sh /home/testuser/test-precommit-hook.sh
 COPY --chown=testuser:testuser test/test-state-hash-staging.sh /home/testuser/test-state-hash-staging.sh
 COPY --chown=testuser:testuser test/test-large-file-efficiency.sh /home/testuser/test-large-file-efficiency.sh
-RUN chmod +x /home/testuser/test-git-incremental.sh /home/testuser/test-precommit-hook.sh /home/testuser/test-state-hash-staging.sh /home/testuser/test-large-file-efficiency.sh
+COPY --chown=testuser:testuser test/test-file-deletion.sh /home/testuser/test-file-deletion.sh
+COPY --chown=testuser:testuser test/test-file-addition.sh /home/testuser/test-file-addition.sh
+RUN chmod +x /home/testuser/test-git-incremental.sh /home/testuser/test-precommit-hook.sh /home/testuser/test-state-hash-staging.sh /home/testuser/test-large-file-efficiency.sh /home/testuser/test-file-deletion.sh /home/testuser/test-file-addition.sh
 
 # Create comprehensive test runner
 COPY --chown=testuser:testuser test/run-all-tests.sh /home/testuser/run-all-tests.sh
