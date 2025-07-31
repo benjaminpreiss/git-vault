@@ -252,7 +252,7 @@ echo "Checking for any plaintext files in .git-vault directory..."
 
 # Check for any plaintext files in the entire .git-vault directory
 security_issue_found=false
-plaintext_files=$(find .git-vault -name "*.txt" -o -name "*.key" -o -name "*.conf" -o -name "*.json" -o -name "*.bin" -o -name "*.wav" -o -name "*.mp4" 2>/dev/null | grep -v "\.aes256gcm\.enc$" | grep -v "\.nonce$" | grep -v "\.hash$" || true)
+plaintext_files=$(find .git-vault -name "*.txt" -o -name "*.key" -o -name "*.conf" -o -name "*.json" -o -name "*.bin" -o -name "*.wav" -o -name "*.mp4" 2>/dev/null | grep -v "\.aes256gcm\.enc$" | grep -v "\.nonce$" | grep -v "\.hash$" | grep -v "/cache/" || true)
 
 if [ -n "$plaintext_files" ]; then
     echo "❌ SECURITY ISSUE: Found plaintext files in .git-vault directory!"
@@ -274,7 +274,7 @@ fi
 
 # Verify only encrypted files and metadata exist
 echo "Verifying vault contains only encrypted files and metadata..."
-vault_files=$(find .git-vault -type f | grep -v "\.aes256gcm\.enc$" | grep -v "\.nonce$" | grep -v "\.hash$" | grep -v "\.sh$" || true)
+vault_files=$(find .git-vault -type f | grep -v "\.aes256gcm\.enc$" | grep -v "\.nonce$" | grep -v "\.hash$" | grep -v "\.sh$" | grep -v "/cache/" | grep -v "\.gitignore$" || true)
 if [ -n "$vault_files" ]; then
     echo "⚠️  WARNING: Found unexpected files in vault (may be OK):"
     echo "$vault_files"

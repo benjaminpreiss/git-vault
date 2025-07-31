@@ -197,6 +197,12 @@ if [ ! -f "$GITIGNORE_FILE" ] || ! grep -q "^\.git-vault\.env$" "$GITIGNORE_FILE
     print_info "Added .git-vault.env to .gitignore"
 fi
 
+# Add cache directory to .gitignore (cache should never be committed)
+if [ ! -f "$GITIGNORE_FILE" ] || ! grep -q "^\.git-vault/cache/$" "$GITIGNORE_FILE"; then
+    echo ".git-vault/cache/" >> "$GITIGNORE_FILE"
+    print_info "Added .git-vault/cache/ to .gitignore"
+fi
+
 # Add secret directories from .git-vault-dirs to .gitignore
 if [ -f "$CONFIG_FILE" ]; then
     print_info "Adding secret directories to .gitignore..."

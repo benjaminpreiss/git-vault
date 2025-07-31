@@ -270,6 +270,17 @@ BASE_ARCHIVE="$VAULT_DIR/base.tar.gz.aes256gcm.enc"
 BASE_NONCE="$VAULT_DIR/base.nonce"
 STATE_HASH="$VAULT_DIR/state.hash"
 
+# Cache directory paths
+CACHE_BASE_DIR=".git-vault/cache"
+CACHE_DIR="$CACHE_BASE_DIR/$(dirname "$DIRECTORY")"
+if [ "$(dirname "$DIRECTORY")" = "." ]; then
+    CACHE_DIR="$CACHE_BASE_DIR/${BASE_NAME}"
+else
+    CACHE_DIR="$CACHE_BASE_DIR/$(dirname "$DIRECTORY")/${BASE_NAME}"
+fi
+CACHE_CONTENT_DIR="$CACHE_DIR/content"
+CACHE_HASH_FILE="$CACHE_DIR/cache.hash"
+
 # Function to create directory hash for change detection using Botan
 create_directory_hash() {
     local dir="$1"
@@ -293,6 +304,125 @@ create_directory_hash() {
     rm -f "$temp_file"
     
     echo "$dir_hash"
+}
+
+# Function to calculate cache hash based on current vault state
+calculate_cache_hash() {
+    local vault_dir="$1"
+    
+    # Create a temporary file to store combined hash data
+    if command -v mktemp >/dev/null 2>&1; then
+        local temp_file=$(mktemp)
+    else
+        local temp_file="/tmp/git-vault-cache-hash-$$-$(date +%s)"
+    fi
+    
+    # Hash base archive if it exists
+    if [ -f "$vault_dir/base.tar.gz.aes256gcm.enc" ]; then
+        botan hash --algo=SHA-256 "$vault_dir/base.tar.gz.aes256gcm.enc" 2>/dev/null | cut -d' ' -f1 >> "$temp_file"
+    fi
+    
+    # Hash all patch files in order if they exist
+    if [ -d "$vault_dir/patches" ]; then
+        find "$vault_dir/patches" -name "*.patch.aes256gcm.enc" | sort | while IFS= read -r patch_file; do
+            if [ -n "$patch_file" ]; then
+                botan hash --algo=SHA-256 "$patch_file" 2>/dev/null | cut -d' ' -f1 >> "$temp_file"
+            fi
+        done
+    fi
+    
+    # Create final hash from combined hashes
+    local cache_hash=$(botan hash --algo=SHA-256 "$temp_file" 2>/dev/null | cut -d' ' -f1)
+    
+    # Clean up
+    rm -f "$temp_file"
+    
+    echo "$cache_hash"
+}
+
+# Function to check if cache is valid
+is_cache_valid() {
+    local vault_dir="$1"
+    local cache_hash_file="$2"
+    
+    # Check if cache hash file exists
+    if [ ! -f "$cache_hash_file" ]; then
+        log_debug "Cache hash file not found: $cache_hash_file"
+        return 1
+    fi
+    
+    # Check if cache content directory exists
+    if [ ! -d "$(dirname "$cache_hash_file")/content" ]; then
+        log_debug "Cache content directory not found"
+        return 1
+    fi
+    
+    # Calculate current vault hash
+    local current_hash=$(calculate_cache_hash "$vault_dir")
+    local stored_hash=$(cat "$cache_hash_file" 2>/dev/null)
+    
+    if [ "$current_hash" = "$stored_hash" ]; then
+        log_debug "Cache is valid (hash: $current_hash)"
+        return 0
+    else
+        log_debug "Cache is invalid (current: $current_hash, stored: $stored_hash)"
+        return 1
+    fi
+}
+
+# Function to update cache with current directory contents
+update_cache() {
+    local source_dir="$1"
+    local cache_content_dir="$2"
+    local cache_hash_file="$3"
+    local vault_dir="$4"
+    
+    log_debug "Updating cache for $source_dir"
+    
+    # Create cache directory structure
+    mkdir -p "$cache_content_dir"
+    mkdir -p "$(dirname "$cache_hash_file")"
+    
+    # Clear existing cache content
+    rm -rf "$cache_content_dir"
+    mkdir -p "$cache_content_dir"
+    
+    # Copy current directory contents to cache
+    if [ -d "$source_dir" ]; then
+        # Use tar to preserve permissions and handle special files
+        tar -cf - -C "$source_dir" . 2>/dev/null | tar -xf - -C "$cache_content_dir" 2>/dev/null || true
+    fi
+    
+    # Calculate and store current vault hash
+    local current_hash=$(calculate_cache_hash "$vault_dir")
+    echo "$current_hash" > "$cache_hash_file"
+    
+    log_debug "Cache updated with hash: $current_hash"
+}
+
+# Function to restore directory from cache
+restore_from_cache() {
+    local target_dir="$1"
+    local cache_content_dir="$2"
+    
+    log_debug "Restoring $target_dir from cache"
+    
+    # Create target directory if it doesn't exist
+    if [ ! -d "$target_dir" ]; then
+        mkdir -p "$target_dir"
+    fi
+    
+    # Clear target directory completely
+    rm -rf "$target_dir"
+    mkdir -p "$target_dir"
+    
+    # Copy cached contents to target directory
+    if [ -d "$cache_content_dir" ]; then
+        # Use tar to preserve permissions and handle special files
+        tar -cf - -C "$cache_content_dir" . 2>/dev/null | tar -xf - -C "$target_dir" 2>/dev/null || true
+    fi
+    
+    log_debug "Directory restored from cache"
 }
 
 # Function to create base snapshot
@@ -661,6 +791,9 @@ lock() {
         # Create incremental patch
         create_patch "$DIRECTORY"
     fi
+    
+    # Update cache after successful lock operation
+    update_cache "$DIRECTORY" "$CACHE_CONTENT_DIR" "$CACHE_HASH_FILE" "$VAULT_DIR"
 }
 
 # Function to apply changes from a simple changes file
@@ -762,6 +895,16 @@ unlock() {
         exit 1
     fi
     
+    # Check if we can use cache for faster restoration
+    if is_cache_valid "$VAULT_DIR" "$CACHE_HASH_FILE"; then
+        log_info "Using cached data for fast restoration..."
+        restore_from_cache "$DIRECTORY" "$CACHE_CONTENT_DIR"
+        log_info "Restoration complete. Files restored from cache to $DIRECTORY"
+        return 0
+    fi
+    
+    log_info "Cache invalid or missing, performing full restoration..."
+    
     # Create temporary directory
     if command -v mktemp >/dev/null 2>&1; then
         TEMP_DIR=$(mktemp -d)
@@ -836,6 +979,9 @@ unlock() {
     
     # Clean up temp directory
     rm -rf "$TEMP_DIR"
+    
+    # Update cache after successful full restoration
+    update_cache "$DIRECTORY" "$CACHE_CONTENT_DIR" "$CACHE_HASH_FILE" "$VAULT_DIR"
     
     log_info "Restoration complete. Files restored to $DIRECTORY"
 }

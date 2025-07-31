@@ -115,13 +115,13 @@ fi
 
 echo
 
-echo "=== Test 3: Verify all .git-vault directory contents are staged ==="
+echo "=== Test 3: Verify all .git-vault directory contents are staged (excluding cache) ==="
 
-# Check that all files in .git-vault are tracked
-ALL_VAULT_FILES=$(find .git-vault -type f 2>/dev/null | sort)
+# Check that all files in .git-vault are tracked (excluding cache directory)
+ALL_VAULT_FILES=$(find .git-vault -type f 2>/dev/null | grep -v "/cache/" | sort)
 TRACKED_VAULT_FILES=$(git ls-files | grep "^\.git-vault/" | sort)
 
-echo "All .git-vault files:"
+echo "All .git-vault files (excluding cache):"
 echo "$ALL_VAULT_FILES"
 echo
 echo "Tracked .git-vault files:"
@@ -137,11 +137,26 @@ for file in $ALL_VAULT_FILES; do
 done
 
 if [ -z "$MISSING_FILES" ]; then
-    echo "✅ SUCCESS: All .git-vault directory contents are tracked by git"
+    echo "✅ SUCCESS: All .git-vault directory contents are tracked by git (cache directory properly excluded)"
 else
     echo "❌ FAILURE: Some .git-vault files are not tracked:"
     echo -e "$MISSING_FILES"
     exit 1
+fi
+
+# Verify cache directory is properly gitignored
+if [ -d ".git-vault/cache" ]; then
+    CACHE_FILES=$(find .git-vault/cache -type f 2>/dev/null || true)
+    if [ -n "$CACHE_FILES" ]; then
+        TRACKED_CACHE_FILES=$(git ls-files | grep "^\.git-vault/cache/" || true)
+        if [ -z "$TRACKED_CACHE_FILES" ]; then
+            echo "✅ SUCCESS: Cache directory files are properly gitignored"
+        else
+            echo "❌ FAILURE: Cache directory files are being tracked (should be gitignored):"
+            echo "$TRACKED_CACHE_FILES"
+            exit 1
+        fi
+    fi
 fi
 
 echo

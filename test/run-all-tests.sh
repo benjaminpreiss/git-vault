@@ -122,6 +122,18 @@ main() {
         "/home/testuser/test-file-addition.sh" \
         "/home/testuser/test-file-addition"
     
+    # Test 7: Caching system test
+    run_test_suite \
+        "Caching System Test" \
+        "/home/testuser/test-caching-system.sh" \
+        "/home/testuser/test-caching-system"
+    
+    # Test 8: Setup script test
+    run_test_suite \
+        "Setup Script Test" \
+        "/home/testuser/test-setup-script.sh" \
+        "/home/testuser/test-setup-script"
+    
     # Final results
     print_header "Test Results Summary"
     
@@ -144,6 +156,8 @@ main() {
         echo "  ✅ File deletion scenarios handled correctly"
         echo "  ✅ File addition scenarios handled correctly"
         echo "  ✅ Large file efficiency optimizations work"
+        echo "  ✅ Caching system provides performance improvements"
+        echo "  ✅ Setup script properly configures git-vault and gitignore"
         echo
         exit 0
     else
@@ -161,7 +175,7 @@ main() {
 cleanup() {
     print_info "Cleaning up test directories..."
     cd /home/testuser
-    rm -rf test-git-incremental test-precommit-hook test-state-hash-staging 2>/dev/null || true
+    rm -rf test-git-incremental test-precommit-hook test-state-hash-staging test-large-file-efficiency test-file-deletion test-file-addition test-caching-system test-setup-script 2>/dev/null || true
 }
 
 # Set up cleanup trap
