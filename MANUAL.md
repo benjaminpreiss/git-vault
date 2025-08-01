@@ -70,6 +70,7 @@ your-repo/
 │   ├── locker.sh                   # Main script
 │   ├── git_incremental_encrypt.sh  # Encryption engine
 │   ├── pre-commit-hook.sh          # Hook script
+│   ├── MANUAL.md                   # User documentation (this file)
 │   ├── data/                       # Encrypted storage (committed)
 │   └── cache/                      # Performance cache (gitignored)
 ├── git-vault                       # Wrapper script

@@ -105,6 +105,7 @@ your-repo/
 │   ├── locker.sh                   # Main orchestration script
 │   ├── git_incremental_encrypt.sh  # Core incremental encryption engine
 │   ├── pre-commit-hook.sh          # Pre-commit hook script
+│   ├── MANUAL.md                   # User documentation and getting started guide
 │   ├── data/                       # Encrypted vault storage
 │   │   └── <vault-name>/           # Per-directory encrypted storage
 │   │       ├── base.tar.gz.aes256gcm.enc  # Initial encrypted snapshot
