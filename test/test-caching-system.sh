@@ -100,12 +100,8 @@ else
     exit 1
 fi
 
-if [ -f ".git-vault/cache/$SECRET_DIR/cache.hash" ]; then
-    print_success "Cache hash file created"
-else
-    print_error "Cache hash file not created"
-    exit 1
-fi
+# Cache hash file is no longer used - cache validation now uses state.hash
+print_success "Cache system updated to use state.hash for validation"
 
 # Verify cache contents match original
 if diff -r "$SECRET_DIR" ".git-vault/cache/$SECRET_DIR/content" >/dev/null 2>&1; then
@@ -205,8 +201,8 @@ print_info "Cached unlock after patch took ${cached_unlock_time} seconds"
 
 # Test 7: Cache invalidation test
 print_info "Test 7: Cache invalidation test"
-# Manually corrupt cache hash to simulate invalidation
-echo "invalid-hash" > ".git-vault/cache/$SECRET_DIR/cache.hash"
+# Manually corrupt state.hash to simulate cache invalidation
+echo "invalid-hash" > ".git-vault/data/$SECRET_DIR/state.hash"
 rm -rf "$SECRET_DIR"
 ./.git-vault/locker.sh unlock
 
@@ -235,6 +231,91 @@ else
     exit 1
 fi
 
+# Test 9: Cache corruption - deleted file
+print_info "Test 9: Cache corruption - deleted file"
+rm -rf "$SECRET_DIR"
+./.git-vault/locker.sh unlock  # Restore from cache first
+if [ -f "$SECRET_DIR/config.env" ]; then
+    print_success "Directory restored from cache"
+else
+    print_error "Failed to restore from cache"
+    exit 1
+fi
+
+# Corrupt cache by deleting a file
+rm -f ".git-vault/cache/$SECRET_DIR/content/config.env"
+print_info "Deleted config.env from cache to simulate corruption"
+
+# Try to unlock again - should detect corruption and rebuild
+rm -rf "$SECRET_DIR"
+./.git-vault/locker.sh unlock
+
+# Verify all files are restored correctly despite cache corruption
+if [ -f "$SECRET_DIR/config.env" ] && [ -f "$SECRET_DIR/new-file.txt" ]; then
+    print_success "Cache corruption (deleted file) handled correctly - cache rebuilt"
+else
+    print_error "Cache corruption (deleted file) not handled correctly"
+    exit 1
+fi
+
+# Test 10: Cache corruption - modified file
+print_info "Test 10: Cache corruption - modified file"
+# Corrupt cache by modifying a file
+echo "corrupted-content" > ".git-vault/cache/$SECRET_DIR/content/config.env"
+print_info "Modified config.env in cache to simulate corruption"
+
+# Try to unlock again - should detect corruption and rebuild
+rm -rf "$SECRET_DIR"
+./.git-vault/locker.sh unlock
+
+# Verify correct content is restored (not the corrupted cache content)
+if grep -q "new-secret=updated-value" "$SECRET_DIR/config.env"; then
+    print_success "Cache corruption (modified file) handled correctly - cache rebuilt"
+else
+    print_error "Cache corruption (modified file) not handled correctly"
+    print_error "Expected 'new-secret=updated-value' in config.env"
+    print_error "Actual content:"
+    cat "$SECRET_DIR/config.env"
+    exit 1
+fi
+
+# Test 11: Cache corruption - missing directory
+print_info "Test 11: Cache corruption - missing cache directory"
+rm -rf ".git-vault/cache/$SECRET_DIR/content"
+print_info "Deleted entire cache content directory to simulate corruption"
+
+# Try to unlock again - should detect missing cache and rebuild
+rm -rf "$SECRET_DIR"
+./.git-vault/locker.sh unlock
+
+# Verify all files are restored correctly
+if [ -f "$SECRET_DIR/config.env" ] && [ -f "$SECRET_DIR/new-file.txt" ] && grep -q "new-secret=updated-value" "$SECRET_DIR/config.env"; then
+    print_success "Cache corruption (missing directory) handled correctly - cache rebuilt"
+else
+    print_error "Cache corruption (missing directory) not handled correctly"
+    exit 1
+fi
+
+# Test 12: Cache corruption - extra file in cache
+print_info "Test 12: Cache corruption - extra file in cache"
+echo "extra-content" > ".git-vault/cache/$SECRET_DIR/content/extra-file.txt"
+print_info "Added extra file to cache to simulate corruption"
+
+# Try to unlock again - should detect corruption and rebuild
+rm -rf "$SECRET_DIR"
+./.git-vault/locker.sh unlock
+
+# Verify correct files are restored (extra file should not be present)
+if [ -f "$SECRET_DIR/config.env" ] && [ -f "$SECRET_DIR/new-file.txt" ] && [ ! -f "$SECRET_DIR/extra-file.txt" ]; then
+    print_success "Cache corruption (extra file) handled correctly - cache rebuilt"
+else
+    print_error "Cache corruption (extra file) not handled correctly"
+    if [ -f "$SECRET_DIR/extra-file.txt" ]; then
+        print_error "Extra file incorrectly restored from corrupted cache"
+    fi
+    exit 1
+fi
+
 print_success "All caching system tests passed!"
 print_info "Cache system is working correctly and provides performance benefits"
 
@@ -244,5 +325,9 @@ print_info "- Cache creation: ✅"
 print_info "- Cache validation: ✅"
 print_info "- Cache-based restoration: ✅"
 print_info "- Cache invalidation: ✅"
+print_info "- Cache corruption detection (deleted file): ✅"
+print_info "- Cache corruption detection (modified file): ✅"
+print_info "- Cache corruption detection (missing directory): ✅"
+print_info "- Cache corruption detection (extra file): ✅"
 print_info "- Incremental patch handling: ✅"
 print_info "- Performance improvement: ✅"
