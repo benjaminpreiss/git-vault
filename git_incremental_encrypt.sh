@@ -269,6 +269,7 @@ mkdir -p "$VAULT_DIR/patches"
 BASE_ARCHIVE="$VAULT_DIR/base.tar.gz.aes256gcm.enc"
 BASE_NONCE="$VAULT_DIR/base.nonce"
 STATE_HASH="$VAULT_DIR/state.hash"
+CACHE_VALIDATION_HASH="$VAULT_DIR/cache.hash"
 
 # Cache directory paths
 CACHE_BASE_DIR=".git-vault/cache"
@@ -305,17 +306,10 @@ create_directory_hash() {
     echo "$dir_hash"
 }
 
-# Function to check if cache is valid
+# Function to check if cache is valid by comparing with cache validation hash
 is_cache_valid() {
     local vault_dir="$1"
     local cache_content_dir="$2"
-    
-    # Check if state.hash file exists (committed to git)
-    local state_hash_file="$vault_dir/state.hash"
-    if [ ! -f "$state_hash_file" ]; then
-        log_debug "State hash file not found: $state_hash_file"
-        return 1
-    fi
     
     # Check if cache content directory exists
     if [ ! -d "$cache_content_dir" ]; then
@@ -323,15 +317,22 @@ is_cache_valid() {
         return 1
     fi
     
-    # Calculate current directory hash and compare with state.hash
-    local current_hash=$(create_directory_hash "$cache_content_dir")
-    local stored_hash=$(cat "$state_hash_file" 2>/dev/null)
+    # Check if cache validation hash file exists (committed to git)
+    local cache_hash_file="$vault_dir/cache.hash"
+    if [ ! -f "$cache_hash_file" ]; then
+        log_debug "Cache validation hash file not found: $cache_hash_file"
+        return 1
+    fi
     
-    if [ "$current_hash" = "$stored_hash" ]; then
+    # Calculate current cache hash and compare with stored cache hash
+    local current_hash=$(create_directory_hash "$cache_content_dir")
+    local expected_hash=$(cat "$cache_hash_file" 2>/dev/null | tr -d '\n\r')
+    
+    if [ "$current_hash" = "$expected_hash" ]; then
         log_debug "Cache is valid (hash: $current_hash)"
         return 0
     else
-        log_debug "Cache is invalid (current: $current_hash, stored: $stored_hash)"
+        log_debug "Cache is invalid (current: $current_hash, expected: $expected_hash)"
         return 1
     fi
 }
@@ -355,6 +356,10 @@ update_cache() {
         # Use tar to preserve permissions and handle special files
         tar -cf - -C "$source_dir" . 2>/dev/null | tar -xf - -C "$cache_content_dir" 2>/dev/null || true
     fi
+    
+    # Update cache validation hash (committed to git)
+    local cache_hash=$(create_directory_hash "$cache_content_dir")
+    echo "$cache_hash" > "$CACHE_VALIDATION_HASH"
     
     log_debug "Cache updated for $source_dir"
 }
@@ -495,7 +500,8 @@ create_patch() {
         return 1
     fi
     
-    # Update stored hash (no plaintext files!)
+    # Update stored hash to represent the final state after this patch
+    # This should be the hash of what the directory looks like after applying all patches
     echo "$current_hash" > "$STATE_HASH"
     
     # Clean up
