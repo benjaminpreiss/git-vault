@@ -509,6 +509,15 @@ create_patch() {
 restore_previous_state() {
     local target_dir="$1"
     
+    # Check if we can use cache for faster restoration of previous state
+    if is_cache_valid "$VAULT_DIR" "$CACHE_CONTENT_DIR"; then
+        log_debug "Using cached data for fast previous state restoration"
+        restore_from_cache "$target_dir" "$CACHE_CONTENT_DIR"
+        return 0
+    fi
+    
+    log_debug "Cache invalid or missing, performing full previous state restoration"
+    
     # First, restore from base snapshot if it exists
     if [ -f "$BASE_ARCHIVE" ] && [ -f "$BASE_NONCE" ]; then
         log_debug "Restoring previous state from base snapshot"
