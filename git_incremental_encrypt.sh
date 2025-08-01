@@ -420,7 +420,11 @@ create_base_snapshot() {
     fi
     
     # Store directory hash for future change detection (no plaintext files!)
-    create_directory_hash "$dir" > "$STATE_HASH"
+    local dir_hash=$(create_directory_hash "$dir")
+    echo "$dir_hash" > "$STATE_HASH"
+    
+    # Also initialize cache validation hash to keep them synchronized
+    echo "$dir_hash" > "$CACHE_VALIDATION_HASH"
     
     # Clean up
     rm -rf "$TEMP_DIR"
@@ -437,13 +441,26 @@ create_patch() {
     
     # Check if there are any changes by comparing directory hashes
     current_hash=$(create_directory_hash "$dir")
-    if [ -f "$STATE_HASH" ]; then
-        stored_hash=$(cat "$STATE_HASH")
-        if [ "$current_hash" = "$stored_hash" ]; then
-            log_info "No changes detected in $dir"
-            return 0
-        fi
+    
+    # Get the hash that represents the current vault state (what we should compare against)
+    local vault_state_hash=""
+    if is_cache_valid "$VAULT_DIR" "$CACHE_CONTENT_DIR"; then
+        # If cache is valid, use the cache validation hash as the reference
+        vault_state_hash=$(cat "$CACHE_VALIDATION_HASH" 2>/dev/null | tr -d '\n\r')
+        log_debug "Using cache validation hash for comparison: $vault_state_hash"
+    elif [ -f "$STATE_HASH" ]; then
+        # Fallback to state hash if cache is invalid
+        vault_state_hash=$(cat "$STATE_HASH" 2>/dev/null | tr -d '\n\r')
+        log_debug "Using state hash for comparison: $vault_state_hash"
     fi
+    
+    # Compare current directory hash with vault state hash
+    if [ -n "$vault_state_hash" ] && [ "$current_hash" = "$vault_state_hash" ]; then
+        log_info "No changes detected in $dir"
+        return 0
+    fi
+    
+    log_debug "Changes detected - current: $current_hash, vault: $vault_state_hash"
     
     # Create temporary directory
     if command -v mktemp >/dev/null 2>&1; then
@@ -503,6 +520,10 @@ create_patch() {
     # Update stored hash to represent the final state after this patch
     # This should be the hash of what the directory looks like after applying all patches
     echo "$current_hash" > "$STATE_HASH"
+    
+    # Also update cache validation hash to keep them synchronized
+    # This ensures that the next change detection will work correctly
+    echo "$current_hash" > "$CACHE_VALIDATION_HASH"
     
     # Clean up
     rm -rf "$TEMP_DIR"
@@ -642,26 +663,77 @@ create_incremental_changes() {
             prev_hash=$(botan hash --algo=SHA-256 "$prev_dir/$filepath" 2>/dev/null | cut -d' ' -f1)
             
             if [ "$current_hash" != "$prev_hash" ]; then
-                # Check file size to determine if we should use binary diff
-                current_size=$(wc -c < "$current_dir/$filepath")
-                prev_size=$(wc -c < "$prev_dir/$filepath")
-                
-                # Use binary diff for files larger than 1KB to save space
-                if [ "$current_size" -gt 1024 ] || [ "$prev_size" -gt 1024 ]; then
-                    # Create binary diff using a simple approach
-                    create_binary_diff "$current_dir/$filepath" "$prev_dir/$filepath" "$changes_file" "$filepath"
+                # Use intelligent diff strategy based on file type
+                if is_text_file "$current_dir/$filepath"; then
+                    # Use text-based diff for text files (more reliable and efficient)
+                    echo "TEXT_DIFF:$filepath" >> "$changes_file"
+                    diff -u "$prev_dir/$filepath" "$current_dir/$filepath" >> "$changes_file" 2>/dev/null || true
+                    echo "EOF_TEXT_DIFF:$filepath" >> "$changes_file"
+                    log_debug "Modified text file (using diff): $filepath"
                 else
-                    # For small files, store entire content
+                    # Use full file replacement for binary files to avoid corruption
                     content_b64=$(base64_encode < "$current_dir/$filepath" | tr -d '\n\r')
-                    echo "MODIFY:$filepath:$content_b64" >> "$changes_file"
+                    echo "BINARY_REPLACE:$filepath:$content_b64" >> "$changes_file"
+                    log_debug "Modified binary file (using replacement): $filepath"
                 fi
-                log_debug "Modified file: $filepath"
             fi
         fi
     done
     
     # Clean up temporary files
     rm -f "$current_files" "$prev_files"
+}
+
+# Function to detect if a file is text-based or binary
+is_text_file() {
+    local file="$1"
+    
+    # Check if file exists
+    if [ ! -f "$file" ]; then
+        return 1
+    fi
+    
+    # Get file extension
+    local extension="${file##*.}"
+    extension=$(echo "$extension" | tr '[:upper:]' '[:lower:]')
+    
+    # Common text file extensions
+    case "$extension" in
+        txt|md|json|xml|html|htm|css|js|ts|py|sh|bash|zsh|fish|yml|yaml|toml|ini|cfg|conf|log|sql|csv|tsv|properties|env|gitignore|dockerfile|makefile|readme|license|changelog|authors|contributors|notice|copying|install|news|todo|bugs|thanks|version|manifest|gemfile|rakefile|procfile|vagrantfile|gruntfile|gulpfile|webpack|babelrc|eslintrc|prettierrc|editorconfig|gitattributes|gitmodules|npmignore|dockerignore|helmignore|terraformignore)
+            return 0
+            ;;
+        go|rs|c|cpp|cc|cxx|h|hpp|hxx|java|kt|scala|clj|cljs|hs|elm|ml|mli|fs|fsi|fsx|fsscript|pl|pm|rb|php|swift|m|mm|vb|cs|pas|pp|inc|asm|s|r|R|matlab|octave|lua|tcl|tk|vim|vimrc|emacs|el|lisp|scm|ss|rkt|erl|hrl|ex|exs|elixir|dart|coffee|litcoffee|pug|jade|haml|sass|scss|less|styl|stylus|handlebars|hbs|mustache|twig|jinja|j2|liquid|erb|ejs|asp|aspx|jsp|cgi|bat|cmd|ps1|psm1|psd1|vbs|applescript|scpt|au3|ahk|nsi|nsh|iss|spec)
+            return 0
+            ;;
+        desktop|service|timer|socket|mount|automount|swap|target|path|slice|scope|device|netdev|link|network|dnssd|resolve|nspawn|exec|kill|resource|busname|machine|user|group|systemd|udev|rules|policy|pkla|override|drop-in|wants|requires|conflicts|before|after|bindsTo|partOf|requisite|requiredBy|wantedBy|also|defaultInstance|x-systemd|fstab|crypttab|hosts|hostname|resolv|nsswitch|passwd|shadow|gshadow|sudoers|crontab|at|anacrontab|inittab|motd|issue|profile|bashrc|bash_profile|bash_logout|zshrc|zsh_profile|zsh_logout|cshrc|tcshrc|login|logout|xinitrc|xsession|Xresources|Xdefaults|inputrc|screenrc|tmux|viminfo|history|lesshst|mysql_history|psql_history|sqlite_history|irb_history|pry_history|node_repl_history|python_history|scala_history|sbt_history|iex_history|erl_crash|beam|core|pid|lock|tmp|temp|cache|bak|backup|orig|old|new|save|swp|swo|un~|~|"#")
+            return 0
+            ;;
+    esac
+    
+    # Check file content using the 'file' command if available
+    if command -v file >/dev/null 2>&1; then
+        local file_type=$(file -b "$file" 2>/dev/null)
+        case "$file_type" in
+            *text*|*ASCII*|*UTF-8*|*Unicode*|*JSON*|*XML*|*HTML*|*script*|*source*|*empty*)
+                return 0
+                ;;
+            *binary*|*executable*|*archive*|*compressed*|*image*|*audio*|*video*)
+                return 1
+                ;;
+        esac
+    fi
+    
+    # Fallback: check for null bytes in first 8192 bytes (common binary indicator)
+    if command -v head >/dev/null 2>&1 && command -v od >/dev/null 2>&1; then
+        if head -c 8192 "$file" 2>/dev/null | od -An -tx1 2>/dev/null | grep -q '00'; then
+            return 1  # Contains null bytes, likely binary
+        else
+            return 0  # No null bytes found, likely text
+        fi
+    fi
+    
+    # Final fallback: assume text for safety (to avoid corruption)
+    return 0
 }
 
 # Function to create binary diff using byte-level comparison
@@ -811,6 +883,64 @@ apply_changes() {
                 echo "$content" | base64_decode > "$target_dir/$filepath"
                 log_debug "Modified file: $filepath"
                 ;;
+            BINARY_REPLACE)
+                # Create directory if needed
+                mkdir -p "$(dirname "$target_dir/$filepath")"
+                # Decode base64 content and write to file
+                echo "$content" | base64_decode > "$target_dir/$filepath"
+                log_debug "Binary replaced file: $filepath"
+                ;;
+            TEXT_DIFF)
+                # Handle text-based diff application
+                # Create directory if needed
+                mkdir -p "$(dirname "$target_dir/$filepath")"
+                
+                # Create temporary file for patch application
+                if command -v mktemp >/dev/null 2>&1; then
+                    temp_original_file=$(mktemp)
+                else
+                    temp_original_file="/tmp/git-vault-textoriginal-$$-$(date +%s)"
+                fi
+                
+                # Copy original file if it exists
+                if [ -f "$target_dir/$filepath" ]; then
+                    cp "$target_dir/$filepath" "$temp_original_file"
+                else
+                    touch "$temp_original_file"
+                fi
+                
+                # Read diff content until EOF_TEXT_DIFF marker
+                diff_content=""
+                while IFS= read -r diff_line || [ -n "$diff_line" ]; do
+                    if [ "$diff_line" = "EOF_TEXT_DIFF:$filepath" ]; then
+                        break
+                    fi
+                    if [ -n "$diff_content" ]; then
+                        diff_content="$diff_content"$'\n'"$diff_line"
+                    else
+                        diff_content="$diff_line"
+                    fi
+                done
+                
+                # Apply patch using patch command if available
+                if command -v patch >/dev/null 2>&1; then
+                    if echo "$diff_content" | patch "$temp_original_file" >/dev/null 2>&1; then
+                        cp "$temp_original_file" "$target_dir/$filepath"
+                        log_debug "Applied text diff to file: $filepath"
+                    else
+                        log_debug "Patch failed for $filepath, falling back to full replacement"
+                        # Fallback: extract new file content from diff
+                        extract_new_content_from_diff "$diff_content" > "$target_dir/$filepath"
+                    fi
+                else
+                    # Fallback: extract new file content from diff manually
+                    extract_new_content_from_diff "$diff_content" > "$target_dir/$filepath"
+                    log_debug "Applied text diff manually to file: $filepath"
+                fi
+                
+                # Clean up
+                rm -f "$temp_original_file"
+                ;;
             REPLACE)
                 # Create directory if needed
                 mkdir -p "$(dirname "$target_dir/$filepath")"
@@ -858,6 +988,36 @@ apply_changes() {
     done < "$changes_file"
 }
 
+# Helper function to extract new file content from unified diff
+extract_new_content_from_diff() {
+    local diff_content="$1"
+    
+    # Parse unified diff and extract the new file content
+    # This is a simplified parser that works with standard unified diff format
+    echo "$diff_content" | awk '
+    BEGIN { in_hunk = 0; line_num = 0 }
+    /^@@/ {
+        in_hunk = 1
+        # Extract new file starting line number
+        match($0, /\+([0-9]+)/, arr)
+        if (arr[1]) line_num = arr[1] - 1
+        next
+    }
+    in_hunk && /^-/ { next }  # Skip deleted lines
+    in_hunk && /^+/ {
+        # Print added lines (remove the + prefix)
+        print substr($0, 2)
+        next
+    }
+    in_hunk && /^ / {
+        # Print context lines (remove the space prefix)
+        print substr($0, 2)
+        next
+    }
+    in_hunk && /^\\/ { next }  # Skip "No newline" messages
+    !in_hunk { next }  # Skip header lines
+    '
+}
 
 # Function to unlock (decrypt) directory
 unlock() {

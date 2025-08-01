@@ -134,6 +134,12 @@ main() {
         "/home/testuser/test-setup-script.sh" \
         "/home/testuser/test-setup-script"
     
+    # Test 9: JSON corruption test
+    run_test_suite \
+        "JSON Corruption Test" \
+        "/home/testuser/test-json-corruption.sh" \
+        "/home/testuser/test-json-corruption"
+    
     # Final results
     print_header "Test Results Summary"
     
@@ -175,7 +181,7 @@ main() {
 cleanup() {
     print_info "Cleaning up test directories..."
     cd /home/testuser
-    rm -rf test-git-incremental test-precommit-hook test-state-hash-staging test-large-file-efficiency test-file-deletion test-file-addition test-caching-system test-setup-script 2>/dev/null || true
+    rm -rf test-git-incremental test-precommit-hook test-state-hash-staging test-large-file-efficiency test-file-deletion test-file-addition test-caching-system test-setup-script test-json-corruption 2>/dev/null || true
 }
 
 # Set up cleanup trap
