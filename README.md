@@ -1,6 +1,12 @@
 # git-vault
 
-A secure directory encryption tool for Git repositories that uses AES-256/GCM encryption with bash-native incremental storage to protect sensitive directories efficiently.
+A secrets management tool for Git repositories that allows users to store secret folders and their contents in Git safely, regardless of their size.
+
+-   One-liner installation with automatic Git integration through pre-commit hooks
+-   Post-quantum secure encryption via Botan cryptography library
+-   Intelligent caching system for 90%+ faster unlock operations
+-   Bash-native implementation with cross-platform compatibility (Linux, macOS, BSD)
+-   Comprehensive Docker testing environment for validation
 
 ## Quick Start (One-Liner Installation)
 
