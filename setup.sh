@@ -126,6 +126,7 @@ files_to_install=(
     "locker.sh"
     "git_incremental_encrypt.sh"
     "pre-commit-hook.sh"
+    "MANUAL.md"
 )
 
 # Check if we have local source files (for testing/development)
@@ -143,7 +144,10 @@ if [ -n "$LOCAL_SOURCE_DIR" ]; then
         if [ -f "$LOCAL_SOURCE_DIR/$file" ]; then
             print_info "Copying $file..."
             cp "$LOCAL_SOURCE_DIR/$file" "$FULL_INSTALL_PATH/$file"
-            chmod +x "$FULL_INSTALL_PATH/$file"
+            # Only make shell scripts executable, not documentation files
+            if [ "${file##*.}" = "sh" ]; then
+                chmod +x "$FULL_INSTALL_PATH/$file"
+            fi
         else
             print_error "Local file $LOCAL_SOURCE_DIR/$file not found."
             exit 1
@@ -165,7 +169,10 @@ else
             print_error "Neither curl nor wget is available. Please install one of them."
             exit 1
         fi
-        chmod +x "$FULL_INSTALL_PATH/$file"
+        # Only make shell scripts executable, not documentation files
+        if [ "${file##*.}" = "sh" ]; then
+            chmod +x "$FULL_INSTALL_PATH/$file"
+        fi
     done
 fi
 

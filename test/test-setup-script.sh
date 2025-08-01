@@ -47,7 +47,7 @@ fi
 
 echo "ℹ️  Test 3: Verify required files installed"
 
-required_files=("locker.sh" "git_incremental_encrypt.sh" "pre-commit-hook.sh")
+required_files=("locker.sh" "git_incremental_encrypt.sh" "pre-commit-hook.sh" "MANUAL.md")
 for file in "${required_files[@]}"; do
     if [ -f ".git-vault/$file" ]; then
         echo "✅ Required file $file installed"

@@ -71,23 +71,6 @@ git-vault uses an efficient incremental approach that stores base snapshots and 
 -   **Incremental growth**: Repository size grows with actual changes, not vault size
 -   **Fast unlock operations**: Intelligent caching system provides near-instant directory restoration
 
-### Storage Structure
-
-```
-.git-vault/data/
-├── secrets/
-│   ├── base.tar.gz.aes256gcm.enc     # Initial snapshot
-│   ├── base.nonce                    # Base nonce
-│   ├── state.hash                    # Directory state hash
-│   └── patches/
-│       ├── 001.patch.aes256gcm.enc   # Incremental patches
-│       └── 001.nonce
-└── .git-vault/cache/                 # Performance cache (gitignored)
-    └── secrets/
-        ├── content/                  # Cached directory contents
-        └── cache.hash                # Cache integrity hash
-```
-
 ### Security Features
 
 -   **AES-256/GCM encryption** - Industry-standard authenticated encryption
