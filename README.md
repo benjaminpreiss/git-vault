@@ -118,17 +118,27 @@ After installation, your repository will contain:
 
 ```
 your-repo/
-├── .git-vault/              # git-vault installation directory
-│   ├── locker.sh           # Main script
-│   ├── git_incremental_encrypt.sh  # Bash-native incremental encryption
-│   └── .gitignore          # Cache directory gitignore
-├── .git-vault/data/         # Encrypted files storage (git-based incremental)
-├── .git-vault/cache/        # Performance cache (gitignored, not committed)
-├── git-vault               # Wrapper script for easy access
-├── .git-vault-dirs         # Configuration file
-├── .git-vault.env          # Environment file (auto-generated, not committed)
-├── .gitignore              # Updated with git-vault entries
-└── .git/hooks/pre-commit   # Auto-encryption hook
+├── .git-vault/                      # git-vault installation directory
+│   ├── locker.sh                   # Main orchestration script
+│   ├── git_incremental_encrypt.sh  # Core incremental encryption engine
+│   ├── pre-commit-hook.sh          # Pre-commit hook script
+│   ├── data/                       # Encrypted vault storage
+│   │   └── <vault-name>/           # Per-directory encrypted storage
+│   │       ├── base.tar.gz.aes256gcm.enc  # Initial encrypted snapshot
+│   │       ├── base.nonce          # Cryptographic nonce for base
+│   │       ├── state.hash          # Directory state verification
+│   │       ├── cache.hash          # Cache integrity verification
+│   │       └── patches/            # Incremental change storage
+│   │           ├── 001.patch.aes256gcm.enc  # Sequential patches
+│   │           └── 001.nonce       # Per-patch nonces
+│   └── cache/                      # Performance optimization cache
+│       └── <vault-name>/           # Per-directory cache structure
+│           └── content/            # Cached decrypted content
+├── git-vault                       # User-friendly wrapper script
+├── .git-vault-dirs                 # Vault configuration (version controlled)
+├── .git-vault.env                  # Runtime environment (auto-generated)
+├── .gitignore                      # Updated with git-vault exclusions
+└── .git/hooks/pre-commit           # Auto-encryption hook
 ```
 
 ## Requirements
